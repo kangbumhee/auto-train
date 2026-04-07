@@ -54,7 +54,7 @@ export async function POST(request) {
       seatAttrCode: body.seatAttrCode || "015",
       adultCount: parseInt(body.passengerCount, 10) || 1,
       railwayCompany: body.railwayCompany || "KORAIL",
-      ticketPassword: settings.ticketPassword || "0000",
+      ticketPassword: "0000",
       cookie,
     });
 

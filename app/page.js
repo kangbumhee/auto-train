@@ -298,11 +298,6 @@ export default function Dashboard() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               cookie: parsed.cookie,
-              ticketPassword: parsed.ticketPassword || "0000",
-              discordWebhook: parsed.discordWebhook || "",
-              telegramBotToken: parsed.telegramBotToken || "",
-              telegramChatId: parsed.telegramChatId || "",
-              ntfyTopic: parsed.ntfyTopic || "",
               notifyEmail: parsed.notifyEmail || "",
               checkInterval: parsed.checkInterval || 60,
             }),

@@ -3,19 +3,12 @@ import { useState, useEffect } from "react";
 
 export default function SettingsPage() {
   const [cookie, setCookie] = useState("");
-  const [ticketPw, setTicketPw] = useState("0000");
-  const [discordUrl, setDiscordUrl] = useState("");
-  const [telegramBotToken, setTelegramBotToken] = useState("");
-  const [telegramChatId, setTelegramChatId] = useState("");
-  const [ntfyTopic, setNtfyTopic] = useState("");
   const [notifyEmail, setNotifyEmail] = useState("");
   const [checkInterval, setCheckInterval] = useState(60);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
-  const [testResult, setTestResult] = useState("");
-  const [ntfyTestResult, setNtfyTestResult] = useState("");
   const [emailTestResult, setEmailTestResult] = useState("");
   const [origin, setOrigin] = useState("");
 
@@ -23,20 +16,13 @@ export default function SettingsPage() {
     setOrigin(typeof window !== "undefined" ? window.location.origin : "");
   }, []);
 
-  // 초기 로드: localStorage → 서버 순서로 복구
   useEffect(() => {
     try {
       const local = localStorage.getItem("train_settings");
       if (local) {
         const parsed = JSON.parse(local);
         if (parsed.cookie) setCookie(parsed.cookie);
-        if (parsed.ticketPassword) setTicketPw(parsed.ticketPassword);
-        if (parsed.discordWebhook) setDiscordUrl(parsed.discordWebhook);
-        if (parsed.telegramBotToken)
-          setTelegramBotToken(parsed.telegramBotToken);
-        if (parsed.telegramChatId) setTelegramChatId(parsed.telegramChatId);
         if (parsed.checkInterval) setCheckInterval(parsed.checkInterval);
-        if (parsed.ntfyTopic) setNtfyTopic(parsed.ntfyTopic);
         if (parsed.notifyEmail) setNotifyEmail(parsed.notifyEmail);
       }
     } catch {}
@@ -56,18 +42,8 @@ export default function SettingsPage() {
           if (d.settings.hasCookie && !localCookie) {
             setCookie("(서버에 저장됨)");
           }
-          if (d.settings.ticketPassword)
-            setTicketPw(d.settings.ticketPassword);
-          if (d.settings.discordWebhook)
-            setDiscordUrl(d.settings.discordWebhook);
-          if (d.settings.telegramBotToken)
-            setTelegramBotToken(d.settings.telegramBotToken);
-          if (d.settings.telegramChatId)
-            setTelegramChatId(d.settings.telegramChatId);
           if (d.settings.checkInterval)
             setCheckInterval(d.settings.checkInterval);
-          if (d.settings.ntfyTopic !== undefined)
-            setNtfyTopic(d.settings.ntfyTopic);
           if (d.settings.notifyEmail !== undefined)
             setNotifyEmail(d.settings.notifyEmail);
         }
@@ -95,11 +71,6 @@ export default function SettingsPage() {
 
       const payload = {
         cookie: cookieToSave,
-        ticketPassword: ticketPw,
-        discordWebhook: discordUrl,
-        telegramBotToken,
-        telegramChatId,
-        ntfyTopic: ntfyTopic.trim(),
         notifyEmail: notifyEmail.trim(),
         checkInterval: Number(checkInterval),
       };
@@ -109,11 +80,6 @@ export default function SettingsPage() {
           "train_settings",
           JSON.stringify({
             cookie: cookieToSave,
-            ticketPassword: ticketPw,
-            discordWebhook: discordUrl,
-            telegramBotToken,
-            telegramChatId,
-            ntfyTopic: ntfyTopic.trim(),
             notifyEmail: notifyEmail.trim(),
             checkInterval: Number(checkInterval),
             savedAt: new Date().toISOString(),
@@ -140,58 +106,6 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
       setTimeout(() => setSaved(false), 3000);
-    }
-  };
-
-  const testTelegram = async () => {
-    if (!telegramBotToken || !telegramChatId) {
-      setTestResult("❌ Bot Token과 Chat ID를 입력하세요");
-      return;
-    }
-    setTestResult("전송 중...");
-    try {
-      const res = await fetch(
-        `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: telegramChatId,
-            text: "🚆 기차 자동 예매 시스템 테스트!\n✅ 텔레그램 연결 성공!",
-          }),
-        }
-      );
-      const data = await res.json();
-      setTestResult(
-        data.ok
-          ? "✅ 전송 성공! 텔레그램 확인하세요."
-          : `❌ 실패: ${data.description}`
-      );
-    } catch (e) {
-      setTestResult(`❌ 오류: ${e.message}`);
-    }
-  };
-
-  const testNtfy = async () => {
-    if (!ntfyTopic.trim()) {
-      setNtfyTestResult("❌ ntfy 토픽을 입력하세요");
-      return;
-    }
-    setNtfyTestResult("전송 중...");
-    try {
-      const res = await fetch("/api/notify/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: "ntfy", topic: ntfyTopic.trim() }),
-      });
-      const data = await res.json();
-      setNtfyTestResult(
-        res.ok && data.ok
-          ? "✅ 전송 요청 완료. ntfy 앱에서 푸시를 확인하세요."
-          : `❌ ${data.error || "실패"}`
-      );
-    } catch (e) {
-      setNtfyTestResult(`❌ 오류: ${e.message}`);
     }
   };
 
@@ -259,19 +173,6 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="text-sm text-gray-400 mb-1 block">
-              승차권 비밀번호 (4자리)
-            </label>
-            <input
-              type="text"
-              className="input-field w-32"
-              maxLength={5}
-              placeholder="0000"
-              value={ticketPw}
-              onChange={(e) => setTicketPw(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-sm text-gray-400 mb-1 block">
               🕐 자동 체크 간격
             </label>
             <select
@@ -291,135 +192,34 @@ export default function SettingsPage() {
       </div>
 
       <div className="card">
-        <h2 className="text-lg font-bold mb-4">🔔 알림 설정</h2>
-        <div className="space-y-5">
-          <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
-            <h3 className="text-sm font-bold text-blue-400 mb-3">📱 텔레그램</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">
-                  Bot Token
-                </label>
-                <input
-                  type="text"
-                  className="input-field text-xs font-mono"
-                  placeholder="123456789:ABCdefGhIJKlmNOPQRStuvWXYz"
-                  value={telegramBotToken}
-                  onChange={(e) => setTelegramBotToken(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">
-                  Chat ID
-                </label>
-                <input
-                  type="text"
-                  className="input-field text-xs font-mono w-48"
-                  placeholder="123456789"
-                  value={telegramChatId}
-                  onChange={(e) => setTelegramChatId(e.target.value)}
-                />
-              </div>
-              <button
-                type="button"
-                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg"
-                onClick={testTelegram}
-              >
-                📤 테스트 전송
-              </button>
-              {testResult && (
-                <p
-                  className={`text-xs ${testResult.includes("✅") ? "text-emerald-400" : "text-red-400"}`}
-                >
-                  {testResult}
-                </p>
-              )}
-              <div className="text-xs text-gray-600 space-y-1 mt-2">
-                <p>1. @BotFather → /newbot → Token 복사</p>
-                <p>2. 봇에게 아무 메시지 보내기</p>
-                <p>
-                  3. api.telegram.org/bot토큰/getUpdates 에서 chat.id 확인
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
-            <h3 className="text-sm font-bold text-purple-400 mb-3">💬 디스코드</h3>
+        <h2 className="text-lg font-bold mb-4">✉️ 이메일 알림</h2>
+        <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18] space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">
+              알림 받을 주소
+            </label>
             <input
-              type="url"
+              type="email"
               className="input-field text-xs"
-              placeholder="https://discord.com/api/webhooks/..."
-              value={discordUrl}
-              onChange={(e) => setDiscordUrl(e.target.value)}
+              placeholder="user@gmail.com"
+              value={notifyEmail}
+              onChange={(e) => setNotifyEmail(e.target.value)}
             />
           </div>
-
-          <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
-            <h3 className="text-sm font-bold text-amber-400 mb-3">📲 ntfy</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">토픽 이름</label>
-                <input
-                  type="text"
-                  className="input-field text-xs font-mono"
-                  placeholder="my-train-alert-abc123"
-                  value={ntfyTopic}
-                  onChange={(e) => setNtfyTopic(e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-gray-600">
-                📱 스마트폰에 ntfy 앱 설치 → 동일 토픽 구독 → 즉시 푸시 수신
-              </p>
-              <button
-                type="button"
-                className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg"
-                onClick={testNtfy}
-              >
-                📤 ntfy 테스트
-              </button>
-              {ntfyTestResult && (
-                <p
-                  className={`text-xs ${ntfyTestResult.includes("✅") ? "text-emerald-400" : "text-red-400"}`}
-                >
-                  {ntfyTestResult}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
-            <h3 className="text-sm font-bold text-cyan-400 mb-3">✉️ 이메일 (Resend)</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">알림 받을 주소</label>
-                <input
-                  type="email"
-                  className="input-field text-xs"
-                  placeholder="user@gmail.com"
-                  value={notifyEmail}
-                  onChange={(e) => setNotifyEmail(e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-gray-600">
-                📧 예매 성공·좌석 발견 시 이메일로 알림 (Vercel에{" "}
-                <code className="text-gray-500">RESEND_API_KEY</code> 필요)
-              </p>
-              <button
-                type="button"
-                className="text-xs bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-1.5 rounded-lg"
-                onClick={testEmailNotify}
-              >
-                📤 이메일 테스트
-              </button>
-              {emailTestResult && (
-                <p
-                  className={`text-xs ${emailTestResult.includes("✅") ? "text-emerald-400" : "text-red-400"}`}
-                >
-                  {emailTestResult}
-                </p>
-              )}
-            </div>
-          </div>
+          <button
+            type="button"
+            className="text-xs bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-1.5 rounded-lg"
+            onClick={testEmailNotify}
+          >
+            📤 테스트 전송
+          </button>
+          {emailTestResult && (
+            <p
+              className={`text-xs ${emailTestResult.includes("✅") ? "text-emerald-400" : "text-red-400"}`}
+            >
+              {emailTestResult}
+            </p>
+          )}
         </div>
       </div>
 

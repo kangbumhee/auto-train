@@ -231,7 +231,7 @@ export async function GET(request) {
           adultCount: parseInt(monitor.passengerCount, 10) || 1,
           railwayCompany:
             target.railwayCompany || monitor.railwayCompany || "KORAIL",
-          ticketPassword: settings.ticketPassword || "0000",
+          ticketPassword: "0000",
           cookie,
         });
 
