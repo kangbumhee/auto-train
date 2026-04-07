@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "* * * * *"
+    }
+  ],
+  "functions": {
+    "app/api/cron/route.js": {
+      "maxDuration": 60
+    },
+    "app/api/purchase/route.js": {
+      "maxDuration": 30
+    }
+  }
+}
