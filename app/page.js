@@ -814,11 +814,11 @@ export default function Dashboard() {
               보냅니다.
             </p>
             <p className="text-gray-600 text-xs">
-              텔레그램·디스코드 알림은{" "}
+              이메일 알림은{" "}
               <a href="/settings" className="text-blue-400 underline">
                 설정
               </a>
-              에서 연결하세요.
+              에서 받을 주소를 지정하세요.
             </p>
             <p className="text-gray-600 text-xs mt-2">
               이 페이지를 열어두면{" "}
