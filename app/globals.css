@@ -6,7 +6,6 @@
   --bg: #0a0a0f;
   --card: #141420;
   --border: #252540;
-  --accent: #3b82f6;
 }
 
 body {
@@ -17,47 +16,70 @@ body {
 .card {
   @apply bg-[#141420] border border-[#252540] rounded-xl p-5;
 }
-
 .btn-primary {
-  @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2.5 rounded-lg transition-all;
+  @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2.5 rounded-lg transition-all disabled:opacity-50;
 }
-
 .btn-danger {
   @apply bg-red-600 hover:bg-red-700 text-white font-semibold px-5 py-2.5 rounded-lg transition-all;
 }
-
 .btn-success {
   @apply bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-5 py-2.5 rounded-lg transition-all;
 }
-
 .input-field {
   @apply w-full bg-[#1a1a2e] border border-[#333355] rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors;
 }
-
 .select-field {
   @apply w-full bg-[#1a1a2e] border border-[#333355] rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 transition-colors;
+}
+
+.train-badge {
+  @apply inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold mr-1;
+}
+.badge-ktx {
+  @apply train-badge bg-blue-700 text-white;
+}
+.badge-srt {
+  @apply train-badge bg-purple-700 text-white;
+}
+.badge-itx {
+  @apply train-badge bg-orange-600 text-white;
+}
+.badge-mugung {
+  @apply train-badge bg-gray-600 text-white;
+}
+
+.seat-available {
+  @apply inline-flex items-center px-2 py-0.5 rounded text-xs border border-gray-500 text-gray-300;
+}
+.seat-soldout {
+  @apply inline-flex items-center px-2 py-0.5 rounded text-xs text-red-400;
 }
 
 .badge {
   @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold;
 }
-
 .badge-watching {
   @apply badge bg-yellow-500/20 text-yellow-400;
 }
-
 .badge-found {
   @apply badge bg-blue-500/20 text-blue-400;
 }
-
 .badge-reserved {
   @apply badge bg-emerald-500/20 text-emerald-400;
 }
-
 .badge-failed {
   @apply badge bg-red-500/20 text-red-400;
 }
-
 .badge-paid {
   @apply badge bg-purple-500/20 text-purple-400;
+}
+
+.autocomplete-dropdown {
+  @apply absolute z-50 w-full bg-[#1a1a2e] border border-[#333355] rounded-lg mt-1 max-h-64 overflow-y-auto shadow-2xl;
+}
+.autocomplete-item {
+  @apply px-4 py-2.5 cursor-pointer hover:bg-[#252545] flex items-center gap-2 text-sm transition-colors;
+}
+.autocomplete-item.active {
+  @apply bg-[#252545];
 }

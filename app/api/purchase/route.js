@@ -4,6 +4,8 @@ import {
   reserveTicket,
   getReservationSummary,
   requestNaverPay,
+  pickReservationId,
+  pickTotalAmount,
 } from "@/lib/train-api";
 import { getSettings, addLog } from "@/lib/redis";
 
@@ -25,8 +27,7 @@ export async function POST(request) {
     const cookie = settings.cookie;
 
     const idResult = await createReservationId(cookie);
-    const reservationId =
-      idResult?.data?.reservationId || idResult?.reservationId;
+    const reservationId = pickReservationId(idResult);
 
     if (!reservationId) {
       throw new Error(
@@ -75,10 +76,7 @@ export async function POST(request) {
     let paymentResult = null;
     try {
       const amount =
-        summary?.data?.totalAmount ||
-        summary?.data?.paymentAmount ||
-        body.estimatedAmount ||
-        0;
+        pickTotalAmount(summary) || body.estimatedAmount || 0;
 
       if (amount > 0) {
         paymentResult = await requestNaverPay({

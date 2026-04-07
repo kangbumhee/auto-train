@@ -13,20 +13,14 @@ import {
   reserveTicket,
   getReservationSummary,
   requestNaverPay,
+  pickReservationId,
+  pickTotalAmount,
+  pickPaymentUrl,
 } from "@/lib/train-api";
 import { sendDiscord } from "@/lib/discord";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-function extractTrains(scheduleResult) {
-  if (scheduleResult?.data?.schedules) return scheduleResult.data.schedules;
-  if (scheduleResult?.data?.trains) return scheduleResult.data.trains;
-  if (Array.isArray(scheduleResult?.data)) return scheduleResult.data;
-  if (scheduleResult?.schedules) return scheduleResult.schedules;
-  if (scheduleResult?.trains) return scheduleResult.trains;
-  return [];
-}
 
 export async function GET(request) {
   const authHeader = request.headers.get("authorization");
@@ -91,7 +85,7 @@ export async function GET(request) {
       }
 
       try {
-        const scheduleResult = await searchTrains({
+        const { trains } = await searchTrains({
           departureDate: monitor.departureDate,
           departureTime: "000000",
           departureStopCode: monitor.departureStopId,
@@ -101,8 +95,6 @@ export async function GET(request) {
           passengerCount: monitor.passengerCount || "1",
           cookie,
         });
-
-        const trains = extractTrains(scheduleResult);
 
         const target = trains.find(
           (t) => String(t.trainNumber) === String(monitor.trainNumber)
@@ -122,6 +114,7 @@ export async function GET(request) {
         }
 
         const seatStatus = (
+          target.generalReserveName ||
           target.generalSeatStatus ||
           target.seatStatus ||
           target.reserveStatus ||
@@ -129,6 +122,7 @@ export async function GET(request) {
         ).toString();
 
         const soldOut =
+          target.generalReserveName === "매진" ||
           seatStatus.includes("매진") ||
           seatStatus.includes("Sold") ||
           seatStatus.includes("sold") ||
@@ -179,22 +173,24 @@ export async function GET(request) {
         let reservationId;
         try {
           const idResult = await createReservationId(cookie);
-          reservationId =
-            idResult?.data?.reservationId || idResult?.reservationId;
+          reservationId = pickReservationId(idResult);
 
           if (!reservationId) {
-            throw new Error("예약 ID 생성 실패");
+            throw new Error(
+              "예약 ID 생성 실패: " +
+                JSON.stringify(idResult).substring(0, 200)
+            );
           }
 
           await reserveTicket({
             reservationId,
-            runDate: monitor.departureDate,
+            runDate: target.runDate || monitor.departureDate,
             trainGroupCode:
               target.trainGroupCode || monitor.trainGroupCode || "100",
             trainNumber: String(monitor.trainNumber),
             departureStopCode:
               target.departureStopCode || monitor.departureStopCode || "",
-            departureDate: monitor.departureDate,
+            departureDate: target.departureDate || monitor.departureDate,
             departureTime:
               target.departureTime || monitor.departureTime || "",
             departureStopRunOrder:
@@ -230,10 +226,7 @@ export async function GET(request) {
               reserveId: reservationId,
               cookie,
             });
-            amount =
-              summary?.data?.totalAmount ||
-              summary?.data?.paymentAmount ||
-              0;
+            amount = pickTotalAmount(summary);
           } catch {}
 
           let paymentUrl = `https://pt.map.naver.com/end-train/bridges/payment/web/summary?reservationId=${reservationId}&from=payment&tripType=OW&lang=ko&userQuery=`;
@@ -248,10 +241,7 @@ export async function GET(request) {
                 cookie,
               });
 
-              paymentUrl =
-                payResult?.data?.paymentUrl ||
-                payResult?.paymentUrl ||
-                paymentUrl;
+              paymentUrl = pickPaymentUrl(payResult) || paymentUrl;
             } catch {}
           }
 

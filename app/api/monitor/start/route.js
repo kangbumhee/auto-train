@@ -58,7 +58,7 @@ export async function PUT(request) {
 
       return NextResponse.json({
         message: "설정 저장 완료",
-        profile: profile?.data || profile,
+        profile: profile?.res || profile?.data || profile,
       });
     }
 
@@ -87,6 +87,7 @@ export async function POST(request) {
       status: "watching",
       trainNumber: train.trainNumber || "",
       trainName:
+        train.trainDetailName ||
         train.trainName ||
         train.trainGroupName ||
         train.trainTypeName ||
