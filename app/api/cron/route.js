@@ -6,6 +6,7 @@ import {
   addLog,
   getCronLastRunMs,
   setCronLastRunMs,
+  getRedis,
 } from "@/lib/redis";
 import {
   searchTrains,
@@ -22,10 +23,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const fromDashboard = searchParams.get("from") === "dashboard";
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
+  const { searchParams } = new URL(request.url);
+  const fromDashboard = searchParams.get("from") === "dashboard";
 
   if (
     cronSecret &&
@@ -38,17 +39,38 @@ export async function GET(request) {
   }
 
   try {
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const redisConfigured = !!(
+      redisUrl &&
+      redisToken &&
+      redisUrl !== "여기에_Upstash_Redis_URL" &&
+      !String(redisUrl).includes("여기에_Upstash") &&
+      !String(redisToken).includes("여기에")
+    );
+
     let monitors = [];
+    let monitorError = null;
     try {
       monitors = await getActiveMonitors();
     } catch (e) {
-      return NextResponse.json({
-        error: "모니터 목록 로드 실패: " + e.message,
-      });
+      monitorError = e.message;
     }
 
+    const memoryMode = getRedis() === null;
+
     if (monitors.length === 0) {
-      return NextResponse.json({ message: "감시 대상 없음", checked: 0 });
+      return NextResponse.json({
+        message: "감시 대상 없음",
+        checked: 0,
+        debug: {
+          redisConfigured,
+          memoryMode,
+          redisUrl: redisUrl ? `${String(redisUrl).substring(0, 30)}...` : "미설정",
+          monitorError,
+          monitorsRaw: monitors,
+        },
+      });
     }
 
     let settings = null;
@@ -302,6 +324,12 @@ export async function GET(request) {
       results,
       timestamp: new Date().toISOString(),
       fromDashboard,
+      activeMonitorCount: monitors.length,
+      monitorsSummary: monitors.map((m) => ({
+        id: m.id,
+        status: m.status,
+        trainNumber: m.trainNumber,
+      })),
     });
   } catch (e) {
     console.error("Cron 오류:", e);
