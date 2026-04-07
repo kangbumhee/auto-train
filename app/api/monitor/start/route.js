@@ -37,6 +37,14 @@ export async function PUT(request) {
         cookie,
         ticketPassword: body.ticketPassword || "0000",
         discordWebhook: body.discordWebhook || "",
+        telegramBotToken:
+          body.telegramBotToken !== undefined
+            ? String(body.telegramBotToken)
+            : prev?.telegramBotToken || "",
+        telegramChatId:
+          body.telegramChatId !== undefined
+            ? String(body.telegramChatId)
+            : prev?.telegramChatId || "",
         checkInterval,
       });
 
@@ -127,8 +135,13 @@ export async function POST(request) {
       });
     } catch {}
 
+    const numLabel = String(monitorData.trainNumber || "").replace(
+      /^0+/,
+      ""
+    );
+
     return NextResponse.json({
-      message: `감시 시작됨: ${monitorData.trainName} ${monitorData.trainNumber}`,
+      message: `${monitorData.trainName} ${numLabel || monitorData.trainNumber}호 감시가 등록되었습니다`,
       id,
     });
   } catch (e) {

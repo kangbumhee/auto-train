@@ -35,6 +35,8 @@ export async function GET(request) {
           hasCookie: Boolean(settings.cookie),
           ticketPassword: settings.ticketPassword || "0000",
           discordWebhook: settings.discordWebhook || "",
+          telegramBotToken: settings.telegramBotToken || "",
+          telegramChatId: settings.telegramChatId || "",
           checkInterval: Number(settings.checkInterval) || 60,
         }
       : null;

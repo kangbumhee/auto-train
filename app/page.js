@@ -1,5 +1,10 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { STATIONS } from "@/lib/stations";
 
 const TRAIN_FILTERS = [
@@ -10,6 +15,45 @@ const TRAIN_FILTERS = [
   { name: "무궁화", code: "102" },
   { name: "ITX-청춘", code: "104" },
 ];
+
+function Toast({ show, message, type, onClose }) {
+  useEffect(() => {
+    if (!show) return;
+    const timer = setTimeout(onClose, 4000);
+    return () => clearTimeout(timer);
+  }, [show, onClose]);
+
+  if (!show) return null;
+
+  const colors = {
+    success: "bg-emerald-600 border-emerald-400",
+    info: "bg-blue-600 border-blue-400",
+    warn: "bg-orange-600 border-orange-400",
+    error: "bg-red-600 border-red-400",
+  };
+
+  const icons = { success: "✅", info: "ℹ️", warn: "⚡", error: "❌" };
+
+  return (
+    <div className="fixed inset-x-0 bottom-6 z-[100] flex justify-center px-4 pointer-events-none">
+      <div
+        className={`pointer-events-auto animate-bounce-in ${colors[type] || colors.info} border rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 max-w-lg w-full sm:w-auto`}
+      >
+        <span className="text-xl">{icons[type] || "ℹ️"}</span>
+        <span className="text-white text-sm font-medium flex-1">
+          {message}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-white/60 hover:text-white shrink-0"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -187,6 +231,20 @@ export default function Dashboard() {
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState("");
   const [settingsOk, setSettingsOk] = useState(false);
+  const [toast, setToast] = useState({
+    show: false,
+    message: "",
+    type: "info",
+  });
+  const monitorRef = useRef(null);
+
+  const hideToast = useCallback(() => {
+    setToast((t) => ({ ...t, show: false }));
+  }, []);
+
+  const showToast = useCallback((msg, type = "info") => {
+    setToast({ show: true, message: msg, type });
+  }, []);
 
   useEffect(() => {
     const d = new Date();
@@ -279,6 +337,12 @@ export default function Dashboard() {
     try {
       const dep = STATIONS.find((s) => s.stopId === depStation);
       const arr = STATIONS.find((s) => s.stopId === arrStation);
+      const isSoldOut = train.generalReserveName === "매진";
+      const num = train.trainNumber
+        ? String(train.trainNumber).replace(/^0+/, "") || "0"
+        : "";
+      const label = train.trainDetailName || train.trainGroupName || "열차";
+
       const res = await fetch("/api/monitor/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -295,10 +359,35 @@ export default function Dashboard() {
         }),
       });
       const data = await res.json();
-      setMessage(data.message || "감시 시작됨");
+
+      if (data.error) {
+        showToast(data.error, "error");
+        return;
+      }
+
+      setMessage(data.message || "감시가 등록되었습니다");
+
+      if (isSoldOut) {
+        showToast(
+          `⚡ ${label} ${num}호 자동 예매가 등록되었습니다. 아래 감시 현황에서 상태를 확인하세요.`,
+          "warn"
+        );
+      } else {
+        showToast(
+          `🎫 ${label} ${num}호 감시·예매 흐름이 등록되었습니다. 감시 현황을 확인하세요.`,
+          "success"
+        );
+      }
+
       fetchMonitors();
+      setTimeout(() => {
+        monitorRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 300);
     } catch (e) {
-      setMessage(`실패: ${e.message}`);
+      showToast(`등록 실패: ${e.message}`, "error");
     } finally {
       setLoading(false);
     }
@@ -310,6 +399,7 @@ export default function Dashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
+    showToast("감시가 중지되었습니다.", "info");
     fetchMonitors();
   };
 
@@ -321,6 +411,13 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <Toast
+        show={toast.show}
+        message={toast.message}
+        type={toast.type}
+        onClose={hideToast}
+      />
+
       {!settingsOk && (
         <div className="card border-yellow-500/50 bg-yellow-500/5">
           <p className="text-yellow-400 text-sm">
@@ -562,7 +659,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="card">
+      <div ref={monitorRef} className="card scroll-mt-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">
             👁️ 감시 현황 ({monitors.length}개)
@@ -578,11 +675,21 @@ export default function Dashboard() {
           )}
         </div>
         {monitors.length === 0 ? (
-          <p className="text-gray-500 text-sm">
-            매진된 열차에서{" "}
-            <span className="text-orange-400">⚡ 자동예매</span>를 누르면
-            감시가 시작됩니다.
-          </p>
+          <div className="text-gray-500 text-sm space-y-2">
+            <p>
+              매진된 열차에서{" "}
+              <span className="text-orange-400 font-semibold">⚡ 자동예매</span>
+              를 누르면 감시가 시작됩니다. 좌석이 열리면 자동 예매 후 알림을
+              보냅니다.
+            </p>
+            <p className="text-gray-600 text-xs">
+              텔레그램·디스코드 알림은{" "}
+              <a href="/settings" className="text-blue-400 underline">
+                설정
+              </a>
+              에서 연결하세요.
+            </p>
+          </div>
         ) : (
           <div className="space-y-3">
             {monitors.map((m) => {

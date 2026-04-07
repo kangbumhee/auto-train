@@ -17,7 +17,7 @@ import {
   pickTotalAmount,
   pickPaymentUrl,
 } from "@/lib/train-api";
-import { sendDiscord } from "@/lib/discord";
+import { sendNotification } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -75,7 +75,6 @@ export async function GET(request) {
     await setCronLastRunMs(now);
 
     const cookie = settings.cookie;
-    const discordUrl = settings.discordWebhook || "";
     const results = [];
 
     for (const monitor of monitors) {
@@ -158,9 +157,9 @@ export async function GET(request) {
           });
         } catch {}
 
-        await sendDiscord(
+        await sendNotification(
           `🎉 **좌석 발견!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n${monitor.departureDate} ${monitor.departureTime}\n⚡ 자동 예매 시작...`,
-          discordUrl
+          settings
         );
 
         await saveMonitor(monitor.id, {
@@ -256,9 +255,9 @@ export async function GET(request) {
             error: null,
           });
 
-          await sendDiscord(
+          await sendNotification(
             `✅ **예매 완료!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n💰 ${amount?.toLocaleString() || "?"}원\n\n💳 결제: ${paymentUrl}`,
-            discordUrl
+            settings
           );
 
           results.push({
@@ -282,9 +281,9 @@ export async function GET(request) {
             });
           } catch {}
 
-          await sendDiscord(
+          await sendNotification(
             `❌ **예매 실패**\n${monitor.trainName} ${monitor.trainNumber}\n오류: ${reserveErr.message}`,
-            discordUrl
+            settings
           );
 
           results.push({
