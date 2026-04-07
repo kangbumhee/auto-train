@@ -7,12 +7,16 @@ export default function SettingsPage() {
   const [discordUrl, setDiscordUrl] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
+  const [ntfyTopic, setNtfyTopic] = useState("");
+  const [notifyEmail, setNotifyEmail] = useState("");
   const [checkInterval, setCheckInterval] = useState(60);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
   const [testResult, setTestResult] = useState("");
+  const [ntfyTestResult, setNtfyTestResult] = useState("");
+  const [emailTestResult, setEmailTestResult] = useState("");
   const [origin, setOrigin] = useState("");
 
   useEffect(() => {
@@ -32,6 +36,8 @@ export default function SettingsPage() {
           setTelegramBotToken(parsed.telegramBotToken);
         if (parsed.telegramChatId) setTelegramChatId(parsed.telegramChatId);
         if (parsed.checkInterval) setCheckInterval(parsed.checkInterval);
+        if (parsed.ntfyTopic) setNtfyTopic(parsed.ntfyTopic);
+        if (parsed.notifyEmail) setNotifyEmail(parsed.notifyEmail);
       }
     } catch {}
 
@@ -60,6 +66,10 @@ export default function SettingsPage() {
             setTelegramChatId(d.settings.telegramChatId);
           if (d.settings.checkInterval)
             setCheckInterval(d.settings.checkInterval);
+          if (d.settings.ntfyTopic !== undefined)
+            setNtfyTopic(d.settings.ntfyTopic);
+          if (d.settings.notifyEmail !== undefined)
+            setNotifyEmail(d.settings.notifyEmail);
         }
       })
       .catch(() => {});
@@ -89,6 +99,8 @@ export default function SettingsPage() {
         discordWebhook: discordUrl,
         telegramBotToken,
         telegramChatId,
+        ntfyTopic: ntfyTopic.trim(),
+        notifyEmail: notifyEmail.trim(),
         checkInterval: Number(checkInterval),
       };
 
@@ -101,6 +113,8 @@ export default function SettingsPage() {
             discordWebhook: discordUrl,
             telegramBotToken,
             telegramChatId,
+            ntfyTopic: ntfyTopic.trim(),
+            notifyEmail: notifyEmail.trim(),
             checkInterval: Number(checkInterval),
             savedAt: new Date().toISOString(),
           })
@@ -155,6 +169,55 @@ export default function SettingsPage() {
       );
     } catch (e) {
       setTestResult(`❌ 오류: ${e.message}`);
+    }
+  };
+
+  const testNtfy = async () => {
+    if (!ntfyTopic.trim()) {
+      setNtfyTestResult("❌ ntfy 토픽을 입력하세요");
+      return;
+    }
+    setNtfyTestResult("전송 중...");
+    try {
+      const res = await fetch("/api/notify/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "ntfy", topic: ntfyTopic.trim() }),
+      });
+      const data = await res.json();
+      setNtfyTestResult(
+        res.ok && data.ok
+          ? "✅ 전송 요청 완료. ntfy 앱에서 푸시를 확인하세요."
+          : `❌ ${data.error || "실패"}`
+      );
+    } catch (e) {
+      setNtfyTestResult(`❌ 오류: ${e.message}`);
+    }
+  };
+
+  const testEmailNotify = async () => {
+    if (!notifyEmail.trim()) {
+      setEmailTestResult("❌ 이메일을 입력하세요");
+      return;
+    }
+    setEmailTestResult("전송 중...");
+    try {
+      const res = await fetch("/api/notify/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel: "email",
+          email: notifyEmail.trim(),
+        }),
+      });
+      const data = await res.json();
+      setEmailTestResult(
+        res.ok && data.ok
+          ? "✅ 전송 요청 완료. 메일함(스팸함)을 확인하세요."
+          : `❌ ${data.error || "실패"}`
+      );
+    } catch (e) {
+      setEmailTestResult(`❌ 오류: ${e.message}`);
     }
   };
 
@@ -289,6 +352,73 @@ export default function SettingsPage() {
               value={discordUrl}
               onChange={(e) => setDiscordUrl(e.target.value)}
             />
+          </div>
+
+          <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
+            <h3 className="text-sm font-bold text-amber-400 mb-3">📲 ntfy</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">토픽 이름</label>
+                <input
+                  type="text"
+                  className="input-field text-xs font-mono"
+                  placeholder="my-train-alert-abc123"
+                  value={ntfyTopic}
+                  onChange={(e) => setNtfyTopic(e.target.value)}
+                />
+              </div>
+              <p className="text-xs text-gray-600">
+                📱 스마트폰에 ntfy 앱 설치 → 동일 토픽 구독 → 즉시 푸시 수신
+              </p>
+              <button
+                type="button"
+                className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg"
+                onClick={testNtfy}
+              >
+                📤 ntfy 테스트
+              </button>
+              {ntfyTestResult && (
+                <p
+                  className={`text-xs ${ntfyTestResult.includes("✅") ? "text-emerald-400" : "text-red-400"}`}
+                >
+                  {ntfyTestResult}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
+            <h3 className="text-sm font-bold text-cyan-400 mb-3">✉️ 이메일 (Resend)</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">알림 받을 주소</label>
+                <input
+                  type="email"
+                  className="input-field text-xs"
+                  placeholder="user@gmail.com"
+                  value={notifyEmail}
+                  onChange={(e) => setNotifyEmail(e.target.value)}
+                />
+              </div>
+              <p className="text-xs text-gray-600">
+                📧 예매 성공·좌석 발견 시 이메일로 알림 (Vercel에{" "}
+                <code className="text-gray-500">RESEND_API_KEY</code> 필요)
+              </p>
+              <button
+                type="button"
+                className="text-xs bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-1.5 rounded-lg"
+                onClick={testEmailNotify}
+              >
+                📤 이메일 테스트
+              </button>
+              {emailTestResult && (
+                <p
+                  className={`text-xs ${emailTestResult.includes("✅") ? "text-emerald-400" : "text-red-400"}`}
+                >
+                  {emailTestResult}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>

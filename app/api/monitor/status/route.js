@@ -41,6 +41,8 @@ export async function GET(request) {
           discordWebhook: settings.discordWebhook || "",
           telegramBotToken: settings.telegramBotToken || "",
           telegramChatId: settings.telegramChatId || "",
+          ntfyTopic: settings.ntfyTopic || "",
+          notifyEmail: settings.notifyEmail || "",
           checkInterval: Number(settings.checkInterval) || 60,
         }
       : null;

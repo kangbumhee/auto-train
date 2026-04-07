@@ -302,6 +302,8 @@ export default function Dashboard() {
               discordWebhook: parsed.discordWebhook || "",
               telegramBotToken: parsed.telegramBotToken || "",
               telegramChatId: parsed.telegramChatId || "",
+              ntfyTopic: parsed.ntfyTopic || "",
+              notifyEmail: parsed.notifyEmail || "",
               checkInterval: parsed.checkInterval || 60,
             }),
           });
