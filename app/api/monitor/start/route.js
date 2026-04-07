@@ -2,14 +2,17 @@ import { NextResponse } from "next/server";
 import { saveMonitor, saveSettings, getSettings, addLog } from "@/lib/redis";
 import { getUserProfile } from "@/lib/train-api";
 
-const PLACEHOLDER_PREFIX = "(저장됨";
+function isPlaceholderCookie(cookie) {
+  const s = String(cookie).trim();
+  return s.startsWith("(저장됨") || s.startsWith("(서버에");
+}
 
 function normalizeCookieFromBody(bodyCookie, prev) {
   if (bodyCookie === undefined) {
     return prev?.cookie || "";
   }
   let cookie = String(bodyCookie).trim();
-  if (cookie.startsWith(PLACEHOLDER_PREFIX)) {
+  if (isPlaceholderCookie(cookie)) {
     return prev?.cookie || "";
   }
   if (!cookie && prev?.cookie) {

@@ -272,6 +272,43 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    const syncSettings = async () => {
+      try {
+        const local = localStorage.getItem("train_settings");
+        if (!local) return;
+        const parsed = JSON.parse(local);
+        if (!parsed.cookie) return;
+
+        const res = await fetch("/api/monitor/status");
+        const data = await res.json();
+
+        if (!data.settings?.hasCookie) {
+          console.log("🔄 쿠키 자동 복구 중...");
+          await fetch("/api/monitor/start", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "saveSettings",
+              cookie: parsed.cookie,
+              ticketPassword: parsed.ticketPassword || "0000",
+              discordWebhook: parsed.discordWebhook || "",
+              telegramBotToken: parsed.telegramBotToken || "",
+              telegramChatId: parsed.telegramChatId || "",
+              checkInterval: parsed.checkInterval || 60,
+            }),
+          });
+          console.log("✅ 쿠키 자동 복구 완료");
+          fetchMonitors();
+        }
+      } catch (e) {
+        console.warn("쿠키 동기화 실패:", e);
+      }
+    };
+
+    syncSettings();
+  }, [fetchMonitors]);
+
+  useEffect(() => {
     fetchMonitors();
     const iv = setInterval(fetchMonitors, 5000);
     return () => clearInterval(iv);

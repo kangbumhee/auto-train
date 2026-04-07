@@ -1,8 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 
-const COOKIE_PLACEHOLDER = "(저장됨 - 변경하려면 새로 입력)";
-
 export default function SettingsPage() {
   const [cookie, setCookie] = useState("");
   const [ticketPw, setTicketPw] = useState("0000");
@@ -21,18 +19,47 @@ export default function SettingsPage() {
     setOrigin(typeof window !== "undefined" ? window.location.origin : "");
   }, []);
 
+  // 초기 로드: localStorage → 서버 순서로 복구
   useEffect(() => {
+    try {
+      const local = localStorage.getItem("train_settings");
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (parsed.cookie) setCookie(parsed.cookie);
+        if (parsed.ticketPassword) setTicketPw(parsed.ticketPassword);
+        if (parsed.discordWebhook) setDiscordUrl(parsed.discordWebhook);
+        if (parsed.telegramBotToken)
+          setTelegramBotToken(parsed.telegramBotToken);
+        if (parsed.telegramChatId) setTelegramChatId(parsed.telegramChatId);
+        if (parsed.checkInterval) setCheckInterval(parsed.checkInterval);
+      }
+    } catch {}
+
     fetch("/api/monitor/status")
       .then((r) => r.json())
       .then((d) => {
+        let localCookie = "";
+        try {
+          const parsed = JSON.parse(
+            localStorage.getItem("train_settings") || "{}"
+          );
+          localCookie = parsed.cookie || "";
+        } catch {}
+
         if (d.settings) {
-          if (d.settings.hasCookie) setCookie(COOKIE_PLACEHOLDER);
-          else setCookie("");
-          setTicketPw(d.settings.ticketPassword || "0000");
-          setDiscordUrl(d.settings.discordWebhook || "");
-          setTelegramBotToken(d.settings.telegramBotToken || "");
-          setTelegramChatId(d.settings.telegramChatId || "");
-          setCheckInterval(d.settings.checkInterval || 60);
+          if (d.settings.hasCookie && !localCookie) {
+            setCookie("(서버에 저장됨)");
+          }
+          if (d.settings.ticketPassword)
+            setTicketPw(d.settings.ticketPassword);
+          if (d.settings.discordWebhook)
+            setDiscordUrl(d.settings.discordWebhook);
+          if (d.settings.telegramBotToken)
+            setTelegramBotToken(d.settings.telegramBotToken);
+          if (d.settings.telegramChatId)
+            setTelegramChatId(d.settings.telegramChatId);
+          if (d.settings.checkInterval)
+            setCheckInterval(d.settings.checkInterval);
         }
       })
       .catch(() => {});
@@ -44,8 +71,21 @@ export default function SettingsPage() {
     setSaved(false);
 
     try {
+      let cookieToSave = cookie;
+      if (cookie.startsWith("(서버에") || cookie.startsWith("(저장됨")) {
+        try {
+          const local = JSON.parse(
+            localStorage.getItem("train_settings") || "{}"
+          );
+          cookieToSave = local.cookie || "";
+        } catch {
+          cookieToSave = "";
+        }
+      }
+
       const payload = {
         action: "saveSettings",
+        cookie: cookieToSave,
         ticketPassword: ticketPw,
         discordWebhook: discordUrl,
         telegramBotToken,
@@ -53,9 +93,20 @@ export default function SettingsPage() {
         checkInterval: Number(checkInterval),
       };
 
-      if (cookie && !cookie.startsWith("(저장됨")) {
-        payload.cookie = cookie;
-      }
+      try {
+        localStorage.setItem(
+          "train_settings",
+          JSON.stringify({
+            cookie: cookieToSave,
+            ticketPassword: ticketPw,
+            discordWebhook: discordUrl,
+            telegramBotToken,
+            telegramChatId,
+            checkInterval: Number(checkInterval),
+            savedAt: new Date().toISOString(),
+          })
+        );
+      } catch {}
 
       const res = await fetch("/api/monitor/start", {
         method: "PUT",
@@ -69,7 +120,7 @@ export default function SettingsPage() {
       } else {
         setSaved(true);
         setProfile(data.profile || null);
-        setCookie(COOKIE_PLACEHOLDER);
+        if (cookieToSave) setCookie(cookieToSave);
       }
     } catch (e) {
       setError(e.message);
@@ -86,21 +137,23 @@ export default function SettingsPage() {
     }
     setTestResult("전송 중...");
     try {
-      const url = `https://api.telegram.org/bot${telegramBotToken}/sendMessage`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: telegramChatId,
-          text: "🚆 기차 자동 예매 시스템 테스트 알림입니다.\n✅ 텔레그램 연결 성공!",
-        }),
-      });
+      const res = await fetch(
+        `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text: "🚆 기차 자동 예매 시스템 테스트!\n✅ 텔레그램 연결 성공!",
+          }),
+        }
+      );
       const data = await res.json();
-      if (data.ok) {
-        setTestResult("✅ 전송 성공! 텔레그램을 확인하세요.");
-      } else {
-        setTestResult(`❌ 실패: ${data.description || "알 수 없는 오류"}`);
-      }
+      setTestResult(
+        data.ok
+          ? "✅ 전송 성공! 텔레그램 확인하세요."
+          : `❌ 실패: ${data.description}`
+      );
     } catch (e) {
       setTestResult(`❌ 오류: ${e.message}`);
     }
@@ -112,7 +165,6 @@ export default function SettingsPage() {
     { label: "30초", value: 30 },
     { label: "1분", value: 60 },
     { label: "2분", value: 120 },
-    { label: "3분", value: 180 },
     { label: "5분", value: 300 },
   ];
 
@@ -124,16 +176,24 @@ export default function SettingsPage() {
           <div>
             <label className="text-sm text-gray-400 mb-1 block">
               네이버 로그인 쿠키 (NID_SES) *
+              {cookie && !cookie.startsWith("(") && (
+                <span className="ml-2 text-emerald-400 text-xs">✅ 저장됨</span>
+              )}
             </label>
             <textarea
               className="input-field h-20 text-xs font-mono"
-              placeholder="NID_SES=... 또는 값만 입력"
-              value={cookie}
-              onFocus={(e) => {
-                if (e.target.value.startsWith("(저장됨")) setCookie("");
+              placeholder="NID_SES=AAABr... (값만 또는 전체 쿠키 문자열)"
+              value={cookie.startsWith("(") ? "" : cookie}
+              onFocus={() => {
+                if (cookie.startsWith("(")) setCookie("");
               }}
               onChange={(e) => setCookie(e.target.value)}
             />
+            {cookie.startsWith("(") && (
+              <p className="text-xs text-emerald-400 mt-1">
+                ✅ 쿠키가 이미 저장되어 있습니다. 변경하려면 새로 입력하세요.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-sm text-gray-400 mb-1 block">
@@ -163,10 +223,7 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-600 mt-1">
-              외부 Cron이 자주 호출해도 여기 간격보다 짧으면 서버에서 건너뜁니다.
-              권장: 30초~1분
-            </p>
+            <p className="text-xs text-gray-600 mt-1">권장: 30초~1분</p>
           </div>
         </div>
       </div>
@@ -175,9 +232,7 @@ export default function SettingsPage() {
         <h2 className="text-lg font-bold mb-4">🔔 알림 설정</h2>
         <div className="space-y-5">
           <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
-            <h3 className="text-sm font-bold text-blue-400 mb-3">
-              📱 텔레그램 알림
-            </h3>
+            <h3 className="text-sm font-bold text-blue-400 mb-3">📱 텔레그램</h3>
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">
@@ -186,7 +241,7 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   className="input-field text-xs font-mono"
-                  placeholder="123456789:ABCdefGHI..."
+                  placeholder="123456789:ABCdefGhIJKlmNOPQRStuvWXYz"
                   value={telegramBotToken}
                   onChange={(e) => setTelegramBotToken(e.target.value)}
                 />
@@ -205,7 +260,7 @@ export default function SettingsPage() {
               </div>
               <button
                 type="button"
-                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-all"
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg"
                 onClick={testTelegram}
               >
                 📤 테스트 전송
@@ -217,39 +272,24 @@ export default function SettingsPage() {
                   {testResult}
                 </p>
               )}
+              <div className="text-xs text-gray-600 space-y-1 mt-2">
+                <p>1. @BotFather → /newbot → Token 복사</p>
+                <p>2. 봇에게 아무 메시지 보내기</p>
+                <p>
+                  3. api.telegram.org/bot토큰/getUpdates 에서 chat.id 확인
+                </p>
+              </div>
             </div>
-            <ol className="mt-3 text-xs text-gray-600 space-y-1 list-decimal ml-4">
-              <li>
-                Telegram에서 <strong>@BotFather</strong> → /newbot 으로 봇 생성 후
-                Token 복사
-              </li>
-              <li>생성한 봇에게 아무 메시지나 한 번 보내기</li>
-              <li>
-                브라우저에서{" "}
-                <code className="text-gray-400">
-                  https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
-                </code>{" "}
-                열어 <code className="text-gray-400">chat.id</code> 확인
-              </li>
-            </ol>
           </div>
-
           <div className="p-4 rounded-lg border border-[#252540] bg-[#0d0d18]">
-            <h3 className="text-sm font-bold text-purple-400 mb-3">
-              💬 디스코드 알림
-            </h3>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">
-                웹훅 URL
-              </label>
-              <input
-                type="url"
-                className="input-field text-xs"
-                placeholder="https://discord.com/api/webhooks/..."
-                value={discordUrl}
-                onChange={(e) => setDiscordUrl(e.target.value)}
-              />
-            </div>
+            <h3 className="text-sm font-bold text-purple-400 mb-3">💬 디스코드</h3>
+            <input
+              type="url"
+              className="input-field text-xs"
+              placeholder="https://discord.com/api/webhooks/..."
+              value={discordUrl}
+              onChange={(e) => setDiscordUrl(e.target.value)}
+            />
           </div>
         </div>
       </div>
@@ -265,7 +305,9 @@ export default function SettingsPage() {
 
       {saved && (
         <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
-          <p className="text-sm text-emerald-400">✅ 설정이 저장되었습니다!</p>
+          <p className="text-sm text-emerald-400">
+            ✅ 설정 저장 완료! (브라우저 + 서버 모두 저장됨)
+          </p>
         </div>
       )}
       {error && (
@@ -277,10 +319,7 @@ export default function SettingsPage() {
         <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
           <p className="text-sm text-blue-400">
             👤 로그인 확인:{" "}
-            {profile.name ||
-              profile.nickname ||
-              profile.id ||
-              "확인됨"}
+            {profile.name || profile.nickname || "확인됨"}
           </p>
         </div>
       )}
@@ -296,22 +335,26 @@ export default function SettingsPage() {
               className="text-blue-400 underline"
             >
               네이버 기차 예매
-            </a>
-            접속 (로그인 상태)
+            </a>{" "}
+            접속 (로그인)
           </li>
           <li>
             <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">F12</kbd>{" "}
-            → Application → Cookies → pt.map.naver.com → NID_SES
+            → Application → Cookies
+          </li>
+          <li>
+            pt.map.naver.com → <strong>NID_SES</strong> 값 복사
           </li>
         </ol>
         <p className="text-xs text-yellow-500 mt-3">
-          ⚠️ 쿠키는 자주 만료됩니다. 실패 시 갱신하세요.
+          ⚠️ 쿠키는 1~2일이면 만료. 실패 시 갱신하세요.
         </p>
       </div>
 
       <div className="card">
-        <h2 className="text-lg font-bold mb-3">⏰ 외부 Cron 설정</h2>
+        <h2 className="text-lg font-bold mb-3">⏰ 외부 Cron (선택)</h2>
         <p className="text-sm text-gray-400 mb-2">
+          페이지를 닫아도 감시하려면{" "}
           <a
             href="https://cron-job.org"
             target="_blank"
@@ -319,20 +362,14 @@ export default function SettingsPage() {
             className="text-blue-400 underline"
           >
             cron-job.org
-          </a>{" "}
-          등에서:
+          </a>
+          에서:
         </p>
-        <div className="bg-[#0a0a12] p-3 rounded-lg font-mono text-xs space-y-1 break-all">
-          <p className="text-gray-500">URL</p>
-          <p className="text-emerald-400">
-            {origin ? `${origin}/api/cron` : "/api/cron"}
+        <div className="bg-[#0a0a12] p-3 rounded-lg font-mono text-xs space-y-1">
+          <p className="text-emerald-400 break-all">
+            {origin ? `${origin}/api/cron` : "https://your-app.vercel.app/api/cron"}
           </p>
-          <p className="text-gray-500 mt-2">Header</p>
-          <p className="text-yellow-400">
-            Authorization: Bearer &lt;CRON_SECRET&gt;
-          </p>
-          <p className="text-gray-500 mt-2">주기</p>
-          <p className="text-white">Every 1 minute (권장)</p>
+          <p className="text-yellow-400">Authorization: Bearer {"<CRON_SECRET>"}</p>
         </div>
       </div>
     </div>
