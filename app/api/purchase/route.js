@@ -4,7 +4,6 @@ import {
   reserveTicket,
   getReservationSummary,
   requestNaverPay,
-  pickReservationId,
   pickTotalAmount,
 } from "@/lib/train-api";
 import { getSettings, addLog } from "@/lib/redis";
@@ -17,7 +16,10 @@ export async function POST(request) {
     try {
       settings = await getSettings();
     } catch {
-      return NextResponse.json({ error: "설정 불러오기 실패" }, { status: 500 });
+      return NextResponse.json(
+        { error: "설정 불러오기 실패" },
+        { status: 500 }
+      );
     }
 
     if (!settings?.cookie) {
@@ -26,25 +28,20 @@ export async function POST(request) {
 
     const cookie = settings.cookie;
 
-    const idResult = await createReservationId(cookie);
-    const reservationId = pickReservationId(idResult);
-
-    if (!reservationId) {
-      throw new Error(
-        "예약 ID 생성 실패: " +
-          JSON.stringify(idResult).substring(0, 200)
-      );
+    const { reserveId } = await createReservationId(cookie);
+    if (!reserveId) {
+      throw new Error("예약 ID 생성 실패");
     }
 
     try {
       await addLog({
         type: "info",
-        message: `예약ID 생성: ${reservationId.substring(0, 12)}...`,
+        message: `예약ID: ${reserveId.substring(0, 12)}...`,
       });
     } catch {}
 
-    await reserveTicket({
-      reservationId,
+    const reserveResult = await reserveTicket({
+      reservationId: reserveId,
       runDate: body.departureDate,
       trainGroupCode: body.trainGroupCode,
       trainNumber: body.trainNumber,
@@ -61,26 +58,17 @@ export async function POST(request) {
       cookie,
     });
 
-    try {
-      await addLog({ type: "success", message: "예매 요청 완료" });
-    } catch {}
-
     let summary = null;
     try {
-      summary = await getReservationSummary({
-        reserveId: reservationId,
-        cookie,
-      });
+      summary = await getReservationSummary({ reserveId, cookie });
     } catch {}
 
     let paymentResult = null;
     try {
-      const amount =
-        pickTotalAmount(summary) || body.estimatedAmount || 0;
-
+      const amount = pickTotalAmount(summary) || 0;
       if (amount > 0) {
         paymentResult = await requestNaverPay({
-          reserveId: reservationId,
+          reserveId,
           productAmount: amount,
           railwayCompany: body.railwayCompany || "KORAIL",
           cookie,
@@ -97,7 +85,9 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
-      reservationId,
+      reserveId,
+      reservationId: reserveId,
+      reserveResult,
       summary,
       paymentResult,
     });

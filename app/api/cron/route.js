@@ -13,7 +13,6 @@ import {
   reserveTicket,
   getReservationSummary,
   requestNaverPay,
-  pickReservationId,
   pickTotalAmount,
   pickPaymentUrl,
 } from "@/lib/train-api";
@@ -23,10 +22,16 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  const fromDashboard = searchParams.get("from") === "dashboard";
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (
+    cronSecret &&
+    !fromDashboard &&
+    authHeader !== `Bearer ${cronSecret}`
+  ) {
     if (process.env.NODE_ENV === "production") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -55,24 +60,25 @@ export async function GET(request) {
       return NextResponse.json({ error: "쿠키 미설정", checked: 0 });
     }
 
-    const intervalSec = Math.min(
-      300,
-      Math.max(10, Number(settings.checkInterval) || 60)
-    );
-    const now = Date.now();
-    const last = await getCronLastRunMs();
-    if (last > 0 && now - last < intervalSec * 1000) {
-      const nextInSec = Math.ceil(
-        (intervalSec * 1000 - (now - last)) / 1000
+    if (!fromDashboard) {
+      const intervalSec = Math.min(
+        300,
+        Math.max(10, Number(settings.checkInterval) || 60)
       );
-      return NextResponse.json({
-        message: "skipped: checkInterval",
-        checkIntervalSec: intervalSec,
-        nextInSec,
-      });
+      const now = Date.now();
+      const last = await getCronLastRunMs();
+      if (last > 0 && now - last < intervalSec * 1000) {
+        const nextInSec = Math.ceil(
+          (intervalSec * 1000 - (now - last)) / 1000
+        );
+        return NextResponse.json({
+          message: "skipped: checkInterval",
+          checkIntervalSec: intervalSec,
+          nextInSec,
+        });
+      }
+      await setCronLastRunMs(now);
     }
-
-    await setCronLastRunMs(now);
 
     const cookie = settings.cookie;
     const results = [];
@@ -100,13 +106,17 @@ export async function GET(request) {
         );
 
         const attempts = (monitor.attempts || 0) + 1;
+        const numShort = String(monitor.trainNumber || "").replace(
+          /^0+/,
+          ""
+        );
 
         if (!target) {
           await saveMonitor(monitor.id, {
             ...monitor,
             attempts,
             lastChecked: new Date().toISOString(),
-            error: `열차 ${monitor.trainNumber}을 찾을 수 없음 (${trains.length}개 조회됨)`,
+            error: `열차 ${monitor.trainNumber} 없음 (${trains.length}개 중)`,
           });
           results.push({ id: monitor.id, status: "not_found" });
           continue;
@@ -115,8 +125,6 @@ export async function GET(request) {
         const seatStatus = (
           target.generalReserveName ||
           target.generalSeatStatus ||
-          target.seatStatus ||
-          target.reserveStatus ||
           ""
         ).toString();
 
@@ -124,9 +132,7 @@ export async function GET(request) {
           target.generalReserveName === "매진" ||
           seatStatus.includes("매진") ||
           seatStatus.includes("Sold") ||
-          seatStatus.includes("sold") ||
-          target.seatAvailable === false ||
-          target.generalSeatAvailable === false;
+          target.seatAvailable === false;
 
         if (soldOut) {
           await saveMonitor(monitor.id, {
@@ -137,14 +143,12 @@ export async function GET(request) {
             error: null,
           });
 
-          if (attempts % 10 === 0) {
-            try {
-              await addLog({
-                type: "check",
-                message: `[${monitor.trainName} ${monitor.trainNumber}] ${attempts}회 체크 - 매진`,
-              });
-            } catch {}
-          }
+          try {
+            await addLog({
+              type: "check",
+              message: `[${monitor.trainName} ${numShort || monitor.trainNumber}] ${attempts}회 체크 - 매진`,
+            });
+          } catch {}
 
           results.push({ id: monitor.id, status: "sold_out", attempts });
           continue;
@@ -153,12 +157,12 @@ export async function GET(request) {
         try {
           await addLog({
             type: "success",
-            message: `🎉 좌석 발견! ${monitor.trainName} ${monitor.trainNumber} (${monitor.departureStopName}→${monitor.arrivalStopName})`,
+            message: `🎉 좌석 발견! ${monitor.trainName} ${numShort || monitor.trainNumber} (${target.generalReserveName || ""})`,
           });
         } catch {}
 
         await sendNotification(
-          `🎉 **좌석 발견!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n${monitor.departureDate} ${monitor.departureTime}\n⚡ 자동 예매 시작...`,
+          `🎉 **좌석 발견!**\n${monitor.trainName} ${numShort || monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n좌석: ${target.generalReserveName || "-"}\n⚡ 자동 예매 시작...`,
           settings
         );
 
@@ -169,147 +173,135 @@ export async function GET(request) {
           lastChecked: new Date().toISOString(),
         });
 
-        let reservationId;
+        const { reserveId } = await createReservationId(cookie);
+        if (!reserveId) {
+          throw new Error("예약 ID 생성 실패");
+        }
+
         try {
-          const idResult = await createReservationId(cookie);
-          reservationId = pickReservationId(idResult);
+          await addLog({
+            type: "info",
+            message: `예약ID: ${reserveId.substring(0, 16)}...`,
+          });
+        } catch {}
 
-          if (!reservationId) {
-            throw new Error(
-              "예약 ID 생성 실패: " +
-                JSON.stringify(idResult).substring(0, 200)
-            );
-          }
+        await reserveTicket({
+          reservationId: reserveId,
+          runDate: target.runDate || monitor.departureDate,
+          trainGroupCode:
+            target.trainGroupCode || monitor.trainGroupCode || "100",
+          trainNumber: String(monitor.trainNumber),
+          departureStopCode:
+            target.departureStopCode || monitor.departureStopCode || "",
+          departureDate: target.departureDate || monitor.departureDate,
+          departureTime: target.departureTime || monitor.departureTime || "",
+          departureStopRunOrder:
+            target.departureStopRunOrder ||
+            monitor.departureStopRunOrder ||
+            "000001",
+          arrivalStopCode:
+            target.arrivalStopCode || monitor.arrivalStopCode || "",
+          arrivalStopConsistRunOrder:
+            target.arrivalStopRunOrder ||
+            monitor.arrivalStopRunOrder ||
+            "000099",
+          seatAttrCode: monitor.seatAttrCode || "015",
+          adultCount: parseInt(monitor.passengerCount, 10) || 1,
+          railwayCompany:
+            target.railwayCompany || monitor.railwayCompany || "KORAIL",
+          ticketPassword: settings.ticketPassword || "0000",
+          cookie,
+        });
 
-          await reserveTicket({
-            reservationId,
-            runDate: target.runDate || monitor.departureDate,
-            trainGroupCode:
-              target.trainGroupCode || monitor.trainGroupCode || "100",
-            trainNumber: String(monitor.trainNumber),
-            departureStopCode:
-              target.departureStopCode || monitor.departureStopCode || "",
-            departureDate: target.departureDate || monitor.departureDate,
-            departureTime:
-              target.departureTime || monitor.departureTime || "",
-            departureStopRunOrder:
-              target.departureStopRunOrder ||
-              monitor.departureStopRunOrder ||
-              "000001",
-            arrivalStopCode:
-              target.arrivalStopCode || monitor.arrivalStopCode || "",
-            arrivalStopConsistRunOrder:
-              target.arrivalStopRunOrder ||
-              target.arrivalStopConsistRunOrder ||
-              monitor.arrivalStopRunOrder ||
-              "000099",
-            seatAttrCode: monitor.seatAttrCode || "015",
-            adultCount: parseInt(monitor.passengerCount, 10) || 1,
-            railwayCompany:
-              target.railwayCompany || monitor.railwayCompany || "KORAIL",
-            ticketPassword: settings.ticketPassword || "0000",
+        try {
+          await addLog({ type: "success", message: "✅ 예매 성공!" });
+        } catch {}
+
+        let amount = 0;
+        let paymentUrl = `https://pt.map.naver.com/end-train/bridges/payment/web/summary?reservationId=${reserveId}&from=payment&tripType=OW&lang=ko&userQuery=`;
+
+        try {
+          const summary = await getReservationSummary({
+            reserveId,
             cookie,
           });
-
-          try {
-            await addLog({
-              type: "success",
-              message: `✅ 예매 성공! 예약ID: ${reservationId.substring(0, 12)}...`,
-            });
-          } catch {}
-
-          let summary = null;
-          let amount = 0;
-          try {
-            summary = await getReservationSummary({
-              reserveId: reservationId,
+          amount = pickTotalAmount(summary);
+          if (amount > 0) {
+            const payResult = await requestNaverPay({
+              reserveId,
+              productAmount: amount,
+              railwayCompany:
+                target.railwayCompany || monitor.railwayCompany || "KORAIL",
               cookie,
             });
-            amount = pickTotalAmount(summary);
-          } catch {}
-
-          let paymentUrl = `https://pt.map.naver.com/end-train/bridges/payment/web/summary?reservationId=${reservationId}&from=payment&tripType=OW&lang=ko&userQuery=`;
-
-          if (amount > 0) {
-            try {
-              const payResult = await requestNaverPay({
-                reserveId: reservationId,
-                productAmount: amount,
-                railwayCompany:
-                  target.railwayCompany || monitor.railwayCompany || "KORAIL",
-                cookie,
-              });
-
-              paymentUrl = pickPaymentUrl(payResult) || paymentUrl;
-            } catch {}
+            paymentUrl = pickPaymentUrl(payResult) || paymentUrl;
           }
-
-          await saveMonitor(monitor.id, {
-            ...monitor,
-            status: "reserved",
-            reserveId: reservationId,
-            paymentUrl,
-            amount,
-            attempts,
-            lastChecked: new Date().toISOString(),
-            error: null,
-          });
-
-          await sendNotification(
-            `✅ **예매 완료!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n💰 ${amount?.toLocaleString() || "?"}원\n\n💳 결제: ${paymentUrl}`,
-            settings
-          );
-
-          results.push({
-            id: monitor.id,
-            status: "reserved",
-            reservationId,
-          });
-        } catch (reserveErr) {
-          await saveMonitor(monitor.id, {
-            ...monitor,
-            status: "failed",
-            error: reserveErr.message,
-            attempts,
-            lastChecked: new Date().toISOString(),
-          });
-
+        } catch (payErr) {
           try {
             await addLog({
-              type: "error",
-              message: `예매 실패 [${monitor.trainName} ${monitor.trainNumber}]: ${reserveErr.message}`,
+              type: "warn",
+              message: `결제 요청 실패 (예매는 완료): ${payErr.message}`,
             });
           } catch {}
-
-          await sendNotification(
-            `❌ **예매 실패**\n${monitor.trainName} ${monitor.trainNumber}\n오류: ${reserveErr.message}`,
-            settings
-          );
-
-          results.push({
-            id: monitor.id,
-            status: "failed",
-            error: reserveErr.message,
-          });
         }
+
+        await saveMonitor(monitor.id, {
+          ...monitor,
+          status: "reserved",
+          reserveId,
+          paymentUrl,
+          amount,
+          attempts,
+          lastChecked: new Date().toISOString(),
+          error: null,
+        });
+
+        await sendNotification(
+          `✅ **예매 완료!**\n${monitor.trainName} ${numShort || monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n💰 ${amount?.toLocaleString() || "?"}원\n💳 ${paymentUrl}`,
+          settings
+        );
+
+        results.push({
+          id: monitor.id,
+          status: "reserved",
+          reserveId,
+        });
       } catch (err) {
         await saveMonitor(monitor.id, {
           ...monitor,
+          status: "failed",
+          error: err.message,
           attempts: (monitor.attempts || 0) + 1,
           lastChecked: new Date().toISOString(),
-          error: err.message,
         });
 
-        results.push({ id: monitor.id, error: err.message });
+        try {
+          await addLog({
+            type: "error",
+            message: `❌ 실패 [${monitor.trainName}]: ${err.message}`,
+          });
+        } catch {}
+
+        await sendNotification(
+          `❌ **예매 실패**\n${monitor.trainName}: ${err.message}`,
+          settings
+        );
+
+        results.push({
+          id: monitor.id,
+          status: "failed",
+          error: err.message,
+        });
       }
 
       await new Promise((r) => setTimeout(r, 800));
     }
 
     return NextResponse.json({
-      message: `${monitors.length}개 감시 체크 완료`,
+      message: `${monitors.length}개 체크 완료`,
       results,
       timestamp: new Date().toISOString(),
+      fromDashboard,
     });
   } catch (e) {
     console.error("Cron 오류:", e);

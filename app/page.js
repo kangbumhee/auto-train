@@ -236,7 +236,11 @@ export default function Dashboard() {
     message: "",
     type: "info",
   });
+  const [cronRunning, setCronRunning] = useState(false);
+  const [lastCronResult, setLastCronResult] = useState(null);
+  const [cronPollSec, setCronPollSec] = useState(60);
   const monitorRef = useRef(null);
+  const cronIntervalRef = useRef(null);
 
   const hideToast = useCallback(() => {
     setToast((t) => ({ ...t, show: false }));
@@ -259,7 +263,11 @@ export default function Dashboard() {
       if (!res.ok) return;
       const data = await res.json();
       if (data.monitors) setMonitors(data.monitors);
-      if (data.settings) setSettingsOk(Boolean(data.settings.hasCookie));
+      if (data.settings) {
+        setSettingsOk(Boolean(data.settings.hasCookie));
+        const sec = Number(data.settings.checkInterval);
+        if (Number.isFinite(sec) && sec >= 10) setCronPollSec(sec);
+      }
     } catch {}
   }, []);
 
@@ -268,6 +276,55 @@ export default function Dashboard() {
     const iv = setInterval(fetchMonitors, 5000);
     return () => clearInterval(iv);
   }, [fetchMonitors]);
+
+  const runCron = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cron?from=dashboard");
+      const data = await res.json();
+      setLastCronResult(data);
+      if (data.results) {
+        for (const r of data.results) {
+          if (r.status === "reserved") {
+            showToast(
+              "🎉 좌석 발견 & 예매 완료! 감시 현황을 확인하세요!",
+              "success"
+            );
+          }
+        }
+      }
+      fetchMonitors();
+    } catch (e) {
+      console.error("Cron 실행 오류:", e);
+    }
+  }, [fetchMonitors, showToast]);
+
+  useEffect(() => {
+    const active = monitors.filter(
+      (m) => m.status === "watching" || m.status === "reserving"
+    );
+    if (active.length === 0) {
+      if (cronIntervalRef.current) {
+        clearInterval(cronIntervalRef.current);
+        cronIntervalRef.current = null;
+      }
+      setCronRunning(false);
+      return;
+    }
+    if (cronIntervalRef.current) return;
+    runCron();
+    const ms = Math.min(300000, Math.max(10000, cronPollSec * 1000));
+    cronIntervalRef.current = setInterval(runCron, ms);
+    setCronRunning(true);
+  }, [monitors, runCron, cronPollSec]);
+
+  useEffect(() => {
+    return () => {
+      if (cronIntervalRef.current) {
+        clearInterval(cronIntervalRef.current);
+        cronIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   const swapStations = () => {
     const tmp = depStation;
@@ -660,19 +717,42 @@ export default function Dashboard() {
       )}
 
       <div ref={monitorRef} className="card scroll-mt-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold">
-            👁️ 감시 현황 ({monitors.length}개)
-          </h2>
-          {monitors.length > 0 && (
-            <button
-              type="button"
-              className="text-xs text-gray-500 hover:text-gray-300"
-              onClick={fetchMonitors}
-            >
-              🔄
-            </button>
-          )}
+        <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="text-lg font-bold">
+              👁️ 감시 현황 ({monitors.length}개)
+            </h2>
+            {cronRunning && (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+                <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                자동 감시 중
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {monitors.filter((m) => m.status === "watching").length > 0 && (
+              <button
+                type="button"
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-all"
+                onClick={async () => {
+                  showToast("수동 체크를 실행합니다...", "info");
+                  await runCron();
+                  showToast("체크 완료!", "success");
+                }}
+              >
+                ▶ 지금 체크
+              </button>
+            )}
+            {monitors.length > 0 && (
+              <button
+                type="button"
+                className="text-xs text-gray-500 hover:text-gray-300"
+                onClick={fetchMonitors}
+              >
+                🔄
+              </button>
+            )}
+          </div>
         </div>
         {monitors.length === 0 ? (
           <div className="text-gray-500 text-sm space-y-2">
@@ -688,6 +768,13 @@ export default function Dashboard() {
                 설정
               </a>
               에서 연결하세요.
+            </p>
+            <p className="text-gray-600 text-xs mt-2">
+              이 페이지를 열어두면{" "}
+              <span className="text-emerald-400 font-semibold">
+                감시 중인 열차가 있을 때
+              </span>{" "}
+              브라우저가 주기적으로 좌석을 확인합니다.
             </p>
           </div>
         ) : (
@@ -716,7 +803,9 @@ export default function Dashboard() {
                         <span className={statusCls}>{statusText}</span>
                         <TrainBadge name={m.trainName} />
                         <span className="text-gray-500 text-xs">
-                          #{m.trainNumber}
+                          #
+                          {String(m.trainNumber || "").replace(/^0+/, "") ||
+                            m.trainNumber}
                         </span>
                       </div>
                       <div className="text-sm text-gray-400">
@@ -766,6 +855,22 @@ export default function Dashboard() {
                 </div>
               );
             })}
+
+            {cronRunning && (
+              <div className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-xs text-emerald-400/90">
+                <span className="font-bold">📡 자동 감시 활성</span> —{" "}
+                {cronPollSec}초마다 좌석 상태를 확인합니다. 이 탭을 닫으면
+                자동 체크가 멈춥니다.
+                {lastCronResult?.timestamp && (
+                  <span className="ml-2 text-gray-500">
+                    마지막:{" "}
+                    {new Date(lastCronResult.timestamp).toLocaleTimeString(
+                      "ko-KR"
+                    )}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
