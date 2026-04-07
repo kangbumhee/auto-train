@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { saveSettingsFromRequestBody } from "@/lib/persist-settings";
+import { getSettings } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,13 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const result = await saveSettingsFromRequestBody(body);
+
+    const readback = await getSettings();
+    result._debug = {
+      savedThenRead: readback !== null,
+      readbackHasCookie: Boolean(readback?.cookie),
+    };
+
     return NextResponse.json(result);
   } catch (e) {
     console.error("POST /api/settings:", e);
