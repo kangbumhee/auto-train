@@ -1,75 +1,17 @@
 import { NextResponse } from "next/server";
-import { saveMonitor, saveSettings, getSettings, addLog } from "@/lib/redis";
-import { getUserProfile } from "@/lib/train-api";
-
-function isPlaceholderCookie(cookie) {
-  const s = String(cookie).trim();
-  return s.startsWith("(저장됨") || s.startsWith("(서버에");
-}
-
-function normalizeCookieFromBody(bodyCookie, prev) {
-  if (bodyCookie === undefined) {
-    return prev?.cookie || "";
-  }
-  let cookie = String(bodyCookie).trim();
-  if (isPlaceholderCookie(cookie)) {
-    return prev?.cookie || "";
-  }
-  if (!cookie && prev?.cookie) {
-    return prev.cookie;
-  }
-  if (cookie && !cookie.includes("=")) {
-    cookie = `NID_SES=${cookie}`;
-  }
-  return cookie;
-}
+import { saveMonitor, addLog } from "@/lib/redis";
+import { saveSettingsFromRequestBody } from "@/lib/persist-settings";
 
 export async function PUT(request) {
   try {
     const body = await request.json();
 
     if (body.action === "saveSettings") {
-      const prev = await getSettings();
-      const cookie = normalizeCookieFromBody(body.cookie, prev);
-      const checkInterval = Math.min(
-        300,
-        Math.max(10, Number(body.checkInterval) || 60)
-      );
-
-      await saveSettings({
-        cookie,
-        ticketPassword: body.ticketPassword || "0000",
-        discordWebhook: body.discordWebhook || "",
-        telegramBotToken:
-          body.telegramBotToken !== undefined
-            ? String(body.telegramBotToken)
-            : prev?.telegramBotToken || "",
-        telegramChatId:
-          body.telegramChatId !== undefined
-            ? String(body.telegramChatId)
-            : prev?.telegramChatId || "",
-        checkInterval,
-      });
-
-      let profile = null;
-      if (cookie) {
-        try {
-          profile = await getUserProfile(cookie);
-        } catch (e) {
-          console.warn("프로필 확인 실패:", e.message);
-        }
-      }
-
-      try {
-        await addLog({
-          type: "info",
-          message: `설정 저장 (쿠키: ${cookie ? "있음" : "없음"}, 체크 간격: ${checkInterval}초)`,
-        });
-      } catch {}
-
+      const result = await saveSettingsFromRequestBody(body);
       return NextResponse.json({
-        message: "설정 저장 완료",
-        profile: profile?.res || profile?.data || profile,
+        message: result.message,
+        profile: result.profile,
+        hasCookie: result.hasCookie,
       });
     }
 

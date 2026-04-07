@@ -84,7 +84,6 @@ export default function SettingsPage() {
       }
 
       const payload = {
-        action: "saveSettings",
         cookie: cookieToSave,
         ticketPassword: ticketPw,
         discordWebhook: discordUrl,
@@ -108,8 +107,8 @@ export default function SettingsPage() {
         );
       } catch {}
 
-      const res = await fetch("/api/monitor/start", {
-        method: "PUT",
+      const res = await fetch("/api/settings", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });

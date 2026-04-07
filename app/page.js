@@ -267,6 +267,8 @@ export default function Dashboard() {
         setSettingsOk(Boolean(data.settings.hasCookie));
         const sec = Number(data.settings.checkInterval);
         if (Number.isFinite(sec) && sec >= 10) setCronPollSec(sec);
+      } else {
+        setSettingsOk(false);
       }
     } catch {}
   }, []);
@@ -277,18 +279,24 @@ export default function Dashboard() {
         const local = localStorage.getItem("train_settings");
         if (!local) return;
         const parsed = JSON.parse(local);
-        if (!parsed.cookie) return;
+        const c = parsed.cookie;
+        if (
+          !c ||
+          String(c).startsWith("(서버에") ||
+          String(c).startsWith("(저장됨")
+        ) {
+          return;
+        }
 
         const res = await fetch("/api/monitor/status");
         const data = await res.json();
 
         if (!data.settings?.hasCookie) {
-          console.log("🔄 쿠키 자동 복구 중...");
-          await fetch("/api/monitor/start", {
-            method: "PUT",
+          console.log("🔄 쿠키 자동 복구 중... (localStorage → 서버)");
+          const put = await fetch("/api/settings", {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              action: "saveSettings",
               cookie: parsed.cookie,
               ticketPassword: parsed.ticketPassword || "0000",
               discordWebhook: parsed.discordWebhook || "",
@@ -297,6 +305,15 @@ export default function Dashboard() {
               checkInterval: parsed.checkInterval || 60,
             }),
           });
+          const saved = await put.json().catch(() => ({}));
+          if (!put.ok) {
+            console.warn("쿠키 동기화 실패:", saved.error || put.status);
+            return;
+          }
+          if (!saved.hasCookie) {
+            console.warn("쿠키 동기화: 서버에 쿠키가 비어 있음 (값 확인)");
+            return;
+          }
           console.log("✅ 쿠키 자동 복구 완료");
           fetchMonitors();
         }
