@@ -8,6 +8,7 @@ export async function GET(request) {
     let monitors = [];
     let settings = null;
     let logs = [];
+    const debugInfo = {};
 
     try {
       monitors = await getActiveMonitors();
@@ -17,8 +18,11 @@ export async function GET(request) {
 
     try {
       settings = await getSettings();
+      debugInfo.settingsRaw = settings ? "exists" : "null";
+      debugInfo.settingsHasCookie = Boolean(settings?.cookie);
     } catch (e) {
       console.warn("설정 로드 실패:", e.message);
+      debugInfo.settingsError = e.message;
     }
 
     const { searchParams } = new URL(request.url);
@@ -45,6 +49,7 @@ export async function GET(request) {
       monitors,
       settings: safeSettings,
       logs,
+      _debug: debugInfo,
     });
   } catch (e) {
     console.error("status 오류:", e);
