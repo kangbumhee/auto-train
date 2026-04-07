@@ -1,28 +1,56 @@
 import { NextResponse } from "next/server";
 import { getActiveMonitors, getSettings, getLogs } from "@/lib/redis";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const monitors = await getActiveMonitors();
-    const full = await getSettings();
+    let monitors = [];
+    let settings = null;
+    let logs = [];
 
-    const settings = full
+    try {
+      monitors = await getActiveMonitors();
+    } catch (e) {
+      console.warn("감시목록 로드 실패:", e.message);
+    }
+
+    try {
+      settings = await getSettings();
+    } catch (e) {
+      console.warn("설정 로드 실패:", e.message);
+    }
+
+    const { searchParams } = new URL(request.url);
+    if (searchParams.get("logs") === "1") {
+      try {
+        logs = await getLogs(100);
+      } catch (e) {
+        console.warn("로그 로드 실패:", e.message);
+      }
+    }
+
+    const safeSettings = settings
       ? {
-          hasCookie: Boolean(full.cookie),
-          ticketPassword: full.ticketPassword,
-          discordWebhook: full.discordWebhook,
+          hasCookie: Boolean(settings.cookie),
+          ticketPassword: settings.ticketPassword || "0000",
+          discordWebhook: settings.discordWebhook || "",
+          checkInterval: Number(settings.checkInterval) || 60,
         }
       : null;
 
-    const result = { monitors, settings };
-
-    if (searchParams.get("logs") === "1") {
-      result.logs = await getLogs(100);
-    }
-
-    return NextResponse.json(result);
+    return NextResponse.json({
+      monitors,
+      settings: safeSettings,
+      logs,
+    });
   } catch (e) {
-    return NextResponse.json({ error: e.message, monitors: [] }, { status: 500 });
+    console.error("status 오류:", e);
+    return NextResponse.json({
+      monitors: [],
+      settings: null,
+      logs: [],
+      error: e.message,
+    });
   }
 }

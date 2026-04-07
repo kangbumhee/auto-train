@@ -2,35 +2,59 @@ import { NextResponse } from "next/server";
 import { saveMonitor, saveSettings, getSettings, addLog } from "@/lib/redis";
 import { getUserProfile } from "@/lib/train-api";
 
-// PUT: 설정 저장
+const PLACEHOLDER_PREFIX = "(저장됨";
+
+function normalizeCookieFromBody(bodyCookie, prev) {
+  if (bodyCookie === undefined) {
+    return prev?.cookie || "";
+  }
+  let cookie = String(bodyCookie).trim();
+  if (cookie.startsWith(PLACEHOLDER_PREFIX)) {
+    return prev?.cookie || "";
+  }
+  if (!cookie && prev?.cookie) {
+    return prev.cookie;
+  }
+  if (cookie && !cookie.includes("=")) {
+    cookie = `NID_SES=${cookie}`;
+  }
+  return cookie;
+}
+
 export async function PUT(request) {
   try {
     const body = await request.json();
 
     if (body.action === "saveSettings") {
       const prev = await getSettings();
-      let cookie = body.cookie || "";
-      // NID_SES 값만 넣은 경우 쿠키 형식으로 변환
-      if (cookie && !cookie.includes("NID_SES=") && !cookie.includes("=")) {
-        cookie = `NID_SES=${cookie}`;
-      }
-      // 빈 문자열이면 기존 쿠키 유지
-      if (!cookie && prev?.cookie) {
-        cookie = prev.cookie;
-      }
+      const cookie = normalizeCookieFromBody(body.cookie, prev);
+      const checkInterval = Math.min(
+        300,
+        Math.max(10, Number(body.checkInterval) || 60)
+      );
 
       await saveSettings({
         cookie,
         ticketPassword: body.ticketPassword || "0000",
         discordWebhook: body.discordWebhook || "",
+        checkInterval,
       });
 
       let profile = null;
-      try {
-        if (cookie) {
+      if (cookie) {
+        try {
           profile = await getUserProfile(cookie);
+        } catch (e) {
+          console.warn("프로필 확인 실패:", e.message);
         }
-      } catch (e) {}
+      }
+
+      try {
+        await addLog({
+          type: "info",
+          message: `설정 저장 (쿠키: ${cookie ? "있음" : "없음"}, 체크 간격: ${checkInterval}초)`,
+        });
+      } catch {}
 
       return NextResponse.json({
         message: "설정 저장 완료",
@@ -40,11 +64,11 @@ export async function PUT(request) {
 
     return NextResponse.json({ error: "알 수 없는 action" }, { status: 400 });
   } catch (e) {
+    console.error("설정 저장 오류:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
 
-// POST: 감시 시작
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -57,23 +81,31 @@ export async function POST(request) {
       );
     }
 
-    const id = `${train.trainNumber}_${body.departureDate}_${Date.now()}`;
+    const id = `${train.trainNumber || "train"}_${body.departureDate || "date"}_${Date.now()}`;
 
     const monitorData = {
       status: "watching",
-      trainNumber: train.trainNumber,
-      trainName: train.trainName || train.trainGroupName || "열차",
-      trainGroupCode: train.trainGroupCode || body.trainGroupCode,
-      departureStopId: body.departureStopId,
-      arrivalStopId: body.arrivalStopId,
-      departureStopCode: train.departureStopCode,
-      arrivalStopCode: train.arrivalStopCode,
-      departureStopRunOrder: train.departureStopRunOrder,
-      arrivalStopRunOrder: train.arrivalStopRunOrder || train.arrivalStopConsistRunOrder,
-      departureStopName: body.departureStopName,
-      arrivalStopName: body.arrivalStopName,
-      departureDate: body.departureDate,
-      departureTime: train.departureTime,
+      trainNumber: train.trainNumber || "",
+      trainName:
+        train.trainName ||
+        train.trainGroupName ||
+        train.trainTypeName ||
+        "열차",
+      trainGroupCode: train.trainGroupCode || body.trainGroupCode || "109",
+      departureStopId: body.departureStopId || "",
+      arrivalStopId: body.arrivalStopId || "",
+      departureStopCode: train.departureStopCode || "",
+      arrivalStopCode: train.arrivalStopCode || "",
+      departureStopRunOrder: train.departureStopRunOrder || "",
+      arrivalStopRunOrder:
+        train.arrivalStopRunOrder ||
+        train.arrivalStopConsistRunOrder ||
+        "",
+      departureStopName: body.departureStopName || "",
+      arrivalStopName: body.arrivalStopName || "",
+      departureDate: body.departureDate || "",
+      departureTime: train.departureTime || "",
+      arrivalTime: train.arrivalTime || "",
       seatAttrCode: body.seatAttrCode || "015",
       passengerCount: body.passengerCount || "1",
       railwayCompany: train.railwayCompany || "KORAIL",
@@ -86,16 +118,20 @@ export async function POST(request) {
     };
 
     await saveMonitor(id, monitorData);
-    await addLog({
-      type: "info",
-      message: `감시 시작: ${monitorData.trainName} ${train.trainNumber} (${body.departureStopName}→${body.arrivalStopName}) ${body.departureDate} ${train.departureTime}`,
-    });
+
+    try {
+      await addLog({
+        type: "info",
+        message: `감시 시작: ${monitorData.trainName} ${monitorData.trainNumber} (${body.departureStopName}→${body.arrivalStopName}) ${body.departureDate} ${train.departureTime || ""}`,
+      });
+    } catch {}
 
     return NextResponse.json({
-      message: "감시가 시작되었습니다",
+      message: `감시 시작됨: ${monitorData.trainName} ${monitorData.trainNumber}`,
       id,
     });
   } catch (e) {
+    console.error("감시 시작 오류:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }

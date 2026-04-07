@@ -4,6 +4,8 @@ import {
   getSettings,
   saveMonitor,
   addLog,
+  getCronLastRunMs,
+  setCronLastRunMs,
 } from "@/lib/redis";
 import {
   searchTrains,
@@ -15,47 +17,80 @@ import {
 import { sendDiscord } from "@/lib/discord";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+function extractTrains(scheduleResult) {
+  if (scheduleResult?.data?.schedules) return scheduleResult.data.schedules;
+  if (scheduleResult?.data?.trains) return scheduleResult.data.trains;
+  if (Array.isArray(scheduleResult?.data)) return scheduleResult.data;
+  if (scheduleResult?.schedules) return scheduleResult.schedules;
+  if (scheduleResult?.trains) return scheduleResult.trains;
+  return [];
+}
 
 export async function GET(request) {
-  // Vercel Cron 보안 검증
   const authHeader = request.headers.get("authorization");
-  if (
-    process.env.CRON_SECRET &&
-    authHeader !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
-    // 로컬 개발 시에는 통과
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     if (process.env.NODE_ENV === "production") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
 
   try {
-    const monitors = await getActiveMonitors();
+    let monitors = [];
+    try {
+      monitors = await getActiveMonitors();
+    } catch (e) {
+      return NextResponse.json({
+        error: "모니터 목록 로드 실패: " + e.message,
+      });
+    }
+
     if (monitors.length === 0) {
       return NextResponse.json({ message: "감시 대상 없음", checked: 0 });
     }
 
-    const settings = await getSettings();
+    let settings = null;
+    try {
+      settings = await getSettings();
+    } catch {}
+
     if (!settings?.cookie) {
-      return NextResponse.json({ error: "쿠키 미설정" }, { status: 400 });
+      return NextResponse.json({ error: "쿠키 미설정", checked: 0 });
     }
 
-    let cookie = settings.cookie;
-    if (!cookie.includes("NID_SES=") && !cookie.includes("=")) {
-      cookie = `NID_SES=${cookie}`;
+    const intervalSec = Math.min(
+      300,
+      Math.max(10, Number(settings.checkInterval) || 60)
+    );
+    const now = Date.now();
+    const last = await getCronLastRunMs();
+    if (last > 0 && now - last < intervalSec * 1000) {
+      const nextInSec = Math.ceil(
+        (intervalSec * 1000 - (now - last)) / 1000
+      );
+      return NextResponse.json({
+        message: "skipped: checkInterval",
+        checkIntervalSec: intervalSec,
+        nextInSec,
+      });
     }
 
+    await setCronLastRunMs(now);
+
+    const cookie = settings.cookie;
+    const discordUrl = settings.discordWebhook || "";
     const results = [];
 
     for (const monitor of monitors) {
-      // 이미 완료된 건 건너뛰기
       if (["reserved", "paid"].includes(monitor.status)) {
         results.push({ id: monitor.id, status: monitor.status, skipped: true });
         continue;
       }
 
       try {
-        // 시간표 조회
         const scheduleResult = await searchTrains({
           departureDate: monitor.departureDate,
           departureTime: "000000",
@@ -67,15 +102,10 @@ export async function GET(request) {
           cookie,
         });
 
-        const trains =
-          scheduleResult?.data?.trains ||
-          scheduleResult?.trains ||
-          scheduleResult?.data ||
-          [];
+        const trains = extractTrains(scheduleResult);
 
-        // 해당 열차 찾기
         const target = trains.find(
-          (t) => t.trainNumber === monitor.trainNumber
+          (t) => String(t.trainNumber) === String(monitor.trainNumber)
         );
 
         const attempts = (monitor.attempts || 0) + 1;
@@ -85,20 +115,27 @@ export async function GET(request) {
             ...monitor,
             attempts,
             lastChecked: new Date().toISOString(),
-            error: "열차를 찾을 수 없음",
+            error: `열차 ${monitor.trainNumber}을 찾을 수 없음 (${trains.length}개 조회됨)`,
           });
           results.push({ id: monitor.id, status: "not_found" });
           continue;
         }
 
-        // 좌석 가능 여부 확인
+        const seatStatus = (
+          target.generalSeatStatus ||
+          target.seatStatus ||
+          target.reserveStatus ||
+          ""
+        ).toString();
+
         const soldOut =
-          target.generalSeatStatus === "매진" ||
-          target.generalSeatStatus === "Sold Out" ||
-          target.seatAvailable === false;
+          seatStatus.includes("매진") ||
+          seatStatus.includes("Sold") ||
+          seatStatus.includes("sold") ||
+          target.seatAvailable === false ||
+          target.generalSeatAvailable === false;
 
         if (soldOut) {
-          // 아직 매진 → 계속 감시
           await saveMonitor(monitor.id, {
             ...monitor,
             attempts,
@@ -107,129 +144,117 @@ export async function GET(request) {
             error: null,
           });
 
-          // 10회마다 로그
           if (attempts % 10 === 0) {
-            await addLog({
-              type: "check",
-              message: `[${monitor.trainName} ${monitor.trainNumber}] ${attempts}회 체크 - 아직 매진`,
-            });
+            try {
+              await addLog({
+                type: "check",
+                message: `[${monitor.trainName} ${monitor.trainNumber}] ${attempts}회 체크 - 매진`,
+              });
+            } catch {}
           }
 
-          results.push({ id: monitor.id, status: "still_sold_out", attempts });
+          results.push({ id: monitor.id, status: "sold_out", attempts });
           continue;
         }
 
-        // 🎉 좌석 발견!
-        await addLog({
-          type: "success",
-          message: `🎉 좌석 발견! ${monitor.trainName} ${monitor.trainNumber} (${monitor.departureStopName}→${monitor.arrivalStopName})`,
-        });
+        try {
+          await addLog({
+            type: "success",
+            message: `🎉 좌석 발견! ${monitor.trainName} ${monitor.trainNumber} (${monitor.departureStopName}→${monitor.arrivalStopName})`,
+          });
+        } catch {}
 
         await sendDiscord(
-          `🎉 **좌석 발견!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n${monitor.departureDate} ${monitor.departureTime}\n\n⚡ 자동 예매를 시작합니다...`,
-          settings.discordWebhook
+          `🎉 **좌석 발견!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n${monitor.departureDate} ${monitor.departureTime}\n⚡ 자동 예매 시작...`,
+          discordUrl
         );
 
         await saveMonitor(monitor.id, {
           ...monitor,
-          status: "found",
+          status: "reserving",
           attempts,
           lastChecked: new Date().toISOString(),
         });
 
-        // === 자동 예매 프로세스 ===
+        let reservationId;
         try {
-          // 예약 ID 생성
-          await saveMonitor(monitor.id, { ...monitor, status: "reserving" });
-
           const idResult = await createReservationId(cookie);
-          const reservationId =
+          reservationId =
             idResult?.data?.reservationId || idResult?.reservationId;
 
           if (!reservationId) {
             throw new Error("예약 ID 생성 실패");
           }
 
-          // 예매 실행
-          const reserveResult = await reserveTicket({
+          await reserveTicket({
             reservationId,
             runDate: monitor.departureDate,
-            trainGroupCode: target.trainGroupCode || monitor.trainGroupCode,
-            trainNumber: monitor.trainNumber,
+            trainGroupCode:
+              target.trainGroupCode || monitor.trainGroupCode || "100",
+            trainNumber: String(monitor.trainNumber),
             departureStopCode:
-              target.departureStopCode || monitor.departureStopCode,
+              target.departureStopCode || monitor.departureStopCode || "",
             departureDate: monitor.departureDate,
-            departureTime: target.departureTime || monitor.departureTime,
+            departureTime:
+              target.departureTime || monitor.departureTime || "",
             departureStopRunOrder:
               target.departureStopRunOrder ||
               monitor.departureStopRunOrder ||
               "000001",
             arrivalStopCode:
-              target.arrivalStopCode || monitor.arrivalStopCode,
+              target.arrivalStopCode || monitor.arrivalStopCode || "",
             arrivalStopConsistRunOrder:
               target.arrivalStopRunOrder ||
               target.arrivalStopConsistRunOrder ||
               monitor.arrivalStopRunOrder ||
               "000099",
             seatAttrCode: monitor.seatAttrCode || "015",
-            adultCount: parseInt(monitor.passengerCount) || 1,
-            railwayCompany: target.railwayCompany || monitor.railwayCompany || "KORAIL",
+            adultCount: parseInt(monitor.passengerCount, 10) || 1,
+            railwayCompany:
+              target.railwayCompany || monitor.railwayCompany || "KORAIL",
             ticketPassword: settings.ticketPassword || "0000",
             cookie,
           });
 
-          await addLog({
-            type: "success",
-            message: `✅ 예매 성공! 예약ID: ${reservationId.substring(0, 12)}...`,
-          });
+          try {
+            await addLog({
+              type: "success",
+              message: `✅ 예매 성공! 예약ID: ${reservationId.substring(0, 12)}...`,
+            });
+          } catch {}
 
-          // 예매 확인
-          const summary = await getReservationSummary({
-            reserveId: reservationId,
-            cookie,
-          });
+          let summary = null;
+          let amount = 0;
+          try {
+            summary = await getReservationSummary({
+              reserveId: reservationId,
+              cookie,
+            });
+            amount =
+              summary?.data?.totalAmount ||
+              summary?.data?.paymentAmount ||
+              0;
+          } catch {}
 
-          const amount =
-            summary?.data?.totalAmount ||
-            summary?.data?.paymentAmount ||
-            0;
+          let paymentUrl = `https://pt.map.naver.com/end-train/bridges/payment/web/summary?reservationId=${reservationId}&from=payment&tripType=OW&lang=ko&userQuery=`;
 
-          // 결제 요청
-          let paymentUrl = null;
           if (amount > 0) {
             try {
-              await saveMonitor(monitor.id, {
-                ...monitor,
-                status: "paying",
-                reserveId: reservationId,
-              });
-
               const payResult = await requestNaverPay({
                 reserveId: reservationId,
                 productAmount: amount,
-                railwayCompany: target.railwayCompany || "KORAIL",
+                railwayCompany:
+                  target.railwayCompany || monitor.railwayCompany || "KORAIL",
                 cookie,
               });
 
               paymentUrl =
                 payResult?.data?.paymentUrl ||
                 payResult?.paymentUrl ||
-                `https://pt.map.naver.com/end-train/bridges/payment/web/summary?reservationId=${reservationId}&from=payment&tripType=OW&lang=ko`;
-
-              await addLog({
-                type: "success",
-                message: `💳 결제 요청 완료 (${amount.toLocaleString()}원)`,
-              });
-            } catch (payErr) {
-              paymentUrl = `https://pt.map.naver.com/end-train/bridges/payment/web/summary?reservationId=${reservationId}&from=payment&tripType=OW&lang=ko`;
-              await addLog({
-                type: "warn",
-                message: `결제 자동 진행 실패. 수동 결제 필요: ${payErr.message}`,
-              });
-            }
+                paymentUrl;
+            } catch {}
           }
 
-          // 상태 업데이트
           await saveMonitor(monitor.id, {
             ...monitor,
             status: "reserved",
@@ -242,8 +267,8 @@ export async function GET(request) {
           });
 
           await sendDiscord(
-            `✅ **예매 완료!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n금액: ${amount?.toLocaleString() || "확인필요"}원\n예약ID: ${reservationId}\n\n💳 결제 링크: ${paymentUrl || "대시보드에서 확인"}`,
-            settings.discordWebhook
+            `✅ **예매 완료!**\n${monitor.trainName} ${monitor.trainNumber}\n${monitor.departureStopName} → ${monitor.arrivalStopName}\n💰 ${amount?.toLocaleString() || "?"}원\n\n💳 결제: ${paymentUrl}`,
+            discordUrl
           );
 
           results.push({
@@ -260,14 +285,16 @@ export async function GET(request) {
             lastChecked: new Date().toISOString(),
           });
 
-          await addLog({
-            type: "error",
-            message: `예매 실패: ${reserveErr.message}`,
-          });
+          try {
+            await addLog({
+              type: "error",
+              message: `예매 실패 [${monitor.trainName} ${monitor.trainNumber}]: ${reserveErr.message}`,
+            });
+          } catch {}
 
           await sendDiscord(
             `❌ **예매 실패**\n${monitor.trainName} ${monitor.trainNumber}\n오류: ${reserveErr.message}`,
-            settings.discordWebhook
+            discordUrl
           );
 
           results.push({
@@ -287,16 +314,16 @@ export async function GET(request) {
         results.push({ id: monitor.id, error: err.message });
       }
 
-      // API 호출 간 딜레이 (차단 방지)
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 800));
     }
 
     return NextResponse.json({
-      message: `${monitors.length}개 감시 완료`,
+      message: `${monitors.length}개 감시 체크 완료`,
       results,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {
+    console.error("Cron 오류:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
