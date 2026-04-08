@@ -22,6 +22,17 @@ import { sendNotification } from "@/lib/notify";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+function isCookieAuthError(message) {
+  const s = String(message || "");
+  return /\b401\b/.test(s) || s.includes("05010000");
+}
+
+function humanizeReserveError(message) {
+  return isCookieAuthError(message)
+    ? "⚠️ 네이버 쿠키가 만료되었습니다. 설정 페이지에서 새 쿠키를 입력하세요."
+    : String(message || "알 수 없는 오류");
+}
+
 export async function GET(request) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -106,12 +117,38 @@ export async function GET(request) {
     const results = [];
 
     for (const monitor of monitors) {
-      if (["reserved", "paid"].includes(monitor.status)) {
+      if (["reserved", "paid", "failed"].includes(monitor.status)) {
         results.push({ id: monitor.id, status: monitor.status, skipped: true });
         continue;
       }
 
       try {
+        if (
+          monitor.status === "watching" &&
+          monitor.error &&
+          (monitor.attempts || 0) >= 5
+        ) {
+          const stopMsg = `${monitor.error} (동일 오류가 5회 이상 반복되어 자동 중지했습니다. 쿠키를 갱신한 뒤 대시보드에서 🔄 재시도를 누르세요.)`;
+          await saveMonitor(monitor.id, {
+            ...monitor,
+            status: "failed",
+            error: stopMsg,
+            lastChecked: new Date().toISOString(),
+          });
+          try {
+            await addLog({
+              type: "error",
+              message: `자동 중지 [${monitor.trainName}]: 연속 오류 5회+`,
+            });
+          } catch {}
+          results.push({
+            id: monitor.id,
+            status: "failed",
+            error: "auto_stopped_repeat_errors",
+          });
+          continue;
+        }
+
         const { trains } = await searchTrains({
           departureDate: monitor.departureDate,
           departureTime: "000000",
@@ -265,6 +302,29 @@ export async function GET(request) {
               message: `결제 요청 실패 (예매는 완료): ${payErr.message}`,
             });
           } catch {}
+          if (isCookieAuthError(payErr.message)) {
+            await saveMonitor(monitor.id, {
+              ...monitor,
+              status: "failed",
+              error: humanizeReserveError(payErr.message),
+              attempts,
+              lastChecked: new Date().toISOString(),
+              reserveId,
+              paymentUrl,
+              amount,
+            });
+            await sendNotification(
+              `❌ **결제 단계 오류**\n${monitor.trainName}: ${humanizeReserveError(payErr.message)}`,
+              settings
+            );
+            results.push({
+              id: monitor.id,
+              status: "failed",
+              error: humanizeReserveError(payErr.message),
+            });
+            await new Promise((r) => setTimeout(r, 800));
+            continue;
+          }
         }
 
         await saveMonitor(monitor.id, {
@@ -289,10 +349,11 @@ export async function GET(request) {
           reserveId,
         });
       } catch (err) {
+        const displayError = humanizeReserveError(err.message);
         await saveMonitor(monitor.id, {
           ...monitor,
           status: "failed",
-          error: err.message,
+          error: displayError,
           attempts: (monitor.attempts || 0) + 1,
           lastChecked: new Date().toISOString(),
         });
@@ -300,19 +361,19 @@ export async function GET(request) {
         try {
           await addLog({
             type: "error",
-            message: `❌ 실패 [${monitor.trainName}]: ${err.message}`,
+            message: `❌ 실패 [${monitor.trainName}]: ${displayError}`,
           });
         } catch {}
 
         await sendNotification(
-          `❌ **예매 실패**\n${monitor.trainName}: ${err.message}`,
+          `❌ **예매 실패**\n${monitor.trainName}: ${displayError}`,
           settings
         );
 
         results.push({
           id: monitor.id,
           status: "failed",
-          error: err.message,
+          error: displayError,
         });
       }
 

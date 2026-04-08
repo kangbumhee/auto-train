@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveMonitor, addLog } from "@/lib/redis";
+import { saveMonitor, addLog, getMonitor } from "@/lib/redis";
 import { saveSettingsFromRequestBody } from "@/lib/persist-settings";
 
 export async function PUT(request) {
@@ -13,6 +13,29 @@ export async function PUT(request) {
         profile: result.profile,
         hasCookie: result.hasCookie,
       });
+    }
+
+    if (body.action === "retryMonitor") {
+      const id = body.id;
+      if (!id || typeof id !== "string") {
+        return NextResponse.json({ error: "id 필요" }, { status: 400 });
+      }
+      const m = await getMonitor(id);
+      if (!m) {
+        return NextResponse.json({ error: "감시 항목 없음" }, { status: 404 });
+      }
+      await saveMonitor(id, {
+        ...m,
+        status: "watching",
+        error: null,
+      });
+      try {
+        await addLog({
+          type: "info",
+          message: `감시 재시도: ${m.trainName} ${m.trainNumber}`,
+        });
+      } catch {}
+      return NextResponse.json({ ok: true, message: "감시를 다시 시작했습니다" });
     }
 
     return NextResponse.json({ error: "알 수 없는 action" }, { status: 400 });

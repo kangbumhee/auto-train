@@ -511,6 +511,25 @@ export default function Dashboard() {
     fetchMonitors();
   };
 
+  const retryMonitor = async (id) => {
+    try {
+      const res = await fetch("/api/monitor/start", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "retryMonitor", id }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        showToast(data.error, "error");
+        return;
+      }
+      showToast("감시를 다시 시작했습니다.", "success");
+      fetchMonitors();
+    } catch (e) {
+      showToast(e.message, "error");
+    }
+  };
+
   const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
   const dateObj = date ? new Date(`${date}T00:00:00`) : null;
   const dateDisplay = dateObj
@@ -895,13 +914,24 @@ export default function Dashboard() {
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="btn-danger text-xs !px-3 !py-1.5 flex-shrink-0"
-                      onClick={() => stopMonitor(m.id)}
-                    >
-                      중지
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-2 flex-shrink-0">
+                      {m.status === "failed" && (
+                        <button
+                          type="button"
+                          className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-3 py-1.5 rounded-lg"
+                          onClick={() => retryMonitor(m.id)}
+                        >
+                          🔄 재시도
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-danger text-xs !px-3 !py-1.5"
+                        onClick={() => stopMonitor(m.id)}
+                      >
+                        중지
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
